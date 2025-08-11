@@ -1,11 +1,10 @@
 import os
-import time
 import logging
-import schedule
 from collections import deque
-from flask import Flask, render_template_string
+from flask import Flask, render_template_string, request
 
 # --- Log Capturing Setup ---
+# This part remains the same to capture logs for the dashboard
 recent_logs = deque(maxlen=20)
 class CaptureLogsHandler(logging.Handler):
     def emit(self, record):
@@ -23,7 +22,9 @@ console_handler = logging.StreamHandler()
 console_handler.setFormatter(log_formatter)
 root_logger.addHandler(console_handler)
 
+
 # --- Assumed/Mock Imports ---
+# These would be your actual classes from other files
 class MockDiscordClient:
     def __init__(self, webhook_url):
         if not webhook_url: raise ValueError("Webhook URL required")
@@ -40,8 +41,8 @@ class MockAlertManager:
 
 from monitors.cboe_monitor import CBOEMonitor
 
+
 # --- Flask App Definition ---
-# This 'app' variable is what Gunicorn will look for.
 app = Flask(__name__)
 
 DASHBOARD_TEMPLATE = """
@@ -49,7 +50,7 @@ DASHBOARD_TEMPLATE = """
 <html>
 <head>
     <title>Secret_Alerts Dashboard</title>
-    <meta http-equiv="refresh" content="15">
+    <meta http-equiv="refresh" content="30">
     <style>
         body { background: #1a1a2e; color: #e0e0e0; font-family: monospace; margin: 0; padding: 2rem; }
         .container { max-width: 1200px; margin: 0 auto; }
@@ -73,6 +74,7 @@ DASHBOARD_TEMPLATE = """
 
 @app.route('/')
 def dashboard():
+    """Renders the dashboard with the most recent logs."""
     log_html = ""
     for log in reversed(recent_logs):
         color = "#e0e0e0"
@@ -81,47 +83,39 @@ def dashboard():
         log_html += f'<div style="color: {color};">{log}</div>'
     return render_template_string(DASHBOARD_TEMPLATE, logs_html=log_html)
 
-# --- Main Application Logic ---
-def perform_check(monitor, alerter):
-    logging.info("Scheduler: Starting job to check for new symbols.")
+
+@app.route('/run-check', methods=['POST'])
+def run_check_endpoint():
+    """
+    This is the secure endpoint that Cloud Scheduler will call.
+    It runs the alert check logic.
+    """
+    logging.info("Check triggered by Cloud Scheduler.")
     try:
-        new_symbols_df = monitor.check_for_unusual_volume()
+        # Initialize components needed for the check
+        discord_client = MockDiscordClient(webhook_url=os.environ.get("DISCORD_WEBHOOK_URL", "http://mock.url"))
+        alert_manager = MockAlertManager(discord_client=discord_client)
+        cboe_monitor = CBOEMonitor()
+        
+        # Perform the check
+        new_symbols_df = cboe_monitor.check_for_unusual_volume()
+
         if not new_symbols_df.empty:
             logging.warning(f"Found {len(new_symbols_df)} new symbols to alert on.")
             for _, row in new_symbols_df.iterrows():
                 title = f"🚀 New Symbol Alert: ${row['Symbol']}"
                 message = f"Unusual volume detected for **{row['Symbol']}**. Volume: **{int(row['Total_Volume']):,}**"
-                alerter.send_alert(title, message)
+                alert_manager.send_alert(title, message)
         else:
-            logging.info("Job finished. No new symbols found.")
+            logging.info("Check finished. No new symbols found.")
+        
+        return "Check completed successfully.", 200
+
     except Exception as e:
         logging.error(f"An error occurred during the scheduled check: {e}", exc_info=True)
+        return "An error occurred during the check.", 500
 
-def run_scheduled_jobs():
-    """This function runs in the background to perform checks."""
-    try:
-        discord_client = MockDiscordClient(webhook_url=os.environ.get("DISCORD_WEBHOOK_URL", "http://mock.url"))
-        alert_manager = MockAlertManager(discord_client=discord_client)
-        cboe_monitor = CBOEMonitor()
-    except Exception as e:
-        logging.critical(f"Failed to initialize components for scheduler: {e}")
-        return
-
-    schedule.every(15).minutes.do(perform_check, monitor=cboe_monitor, alerter=alert_manager)
-    
-    # Run one check immediately at startup
-    perform_check(monitor=cboe_monitor, alerter=alert_manager)
-
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
 
 if __name__ == '__main__':
-    # This block is for local development. Gunicorn will not run this.
-    # It starts the scheduler in a background thread and then the Flask dev server.
-    import threading
-    scheduler_thread = threading.Thread(target=run_scheduled_jobs, daemon=True)
-    scheduler_thread.start()
-    
-    # The Flask development server is NOT for production.
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=False)
+    # This block is for local development only. Gunicorn will not run this.
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=True)
