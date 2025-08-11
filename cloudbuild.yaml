@@ -19,3 +19,7 @@ steps:
     - '--region=us-central1'
     - '--platform=managed'
     - '--allow-unauthenticated'
+
+# Fix the logging issue
+options:
+  logging: CLOUD_LOGGING_ONLY
