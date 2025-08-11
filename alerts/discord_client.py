@@ -3,7 +3,7 @@
 import json
 import requests
 from datetime import datetime
-from typing import Optional # <--- THIS IS THE FIX
+from typing import Optional
 
 class DiscordClient:
     """Handles sending alerts to a Discord webhook."""
@@ -44,6 +44,9 @@ class DiscordClient:
                 }
             }]
         }
+
+        # --- THIS IS THE FIX: Log the exact payload before sending ---
+        print(f"🔍 DEBUG: Sending Discord payload:\n{json.dumps(payload, indent=2)}")
 
         try:
             response = requests.post(

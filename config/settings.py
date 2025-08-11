@@ -1,8 +1,5 @@
 # config/settings.py
 
-"""
-Configuration management for the Secret_Alerts Trading System
-"""
 import os
 from dataclasses import dataclass, field
 from typing import List, Tuple
@@ -22,26 +19,32 @@ class TradingHours:
     market_close: int = 16
     after_hours_end: int = 20
     rush_hour_windows: List[Tuple[int, int]] = field(default_factory=lambda: [(9, 10), (15, 16)])
-    # --- THIS IS THE FIX ---
-    # Adding the missing time attributes that market_schedule.py needs.
     rush_start: str = "08:20"
     rush_end: str = "10:00"
     market_end: str = "15:30"
 
-# --- This is the correct Config class that main.py expects ---
+# --- This is the correct and COMPLETE Config class ---
 @dataclass
 class Config:
     """Main configuration for the Secret_Alerts system."""
     discord_webhook: str = os.environ.get("DISCORD_WEBHOOK", "")
-    cboe_url: str = "https://www.cboe.com/us/options/market_statistics/daily_options_volume/csv"
-    vip_tickers: List[str] = field(default_factory=lambda: ["SPY", "QQQ", "TSLA", "AAPL", "AMZN", "GOOGL"])
+    
+    # --- THIS IS THE FIX ---
+    # Updated to the correct URL for CBOE short sale circuit breaker data.
+    cboe_url: str = "https://www.cboe.com/us/equities/market_statistics/short_sale_circuit_breakers/downloads/BatsCircuitBreakers2025.csv"
+    
+    vip_tickers: List[str] = field(default_factory=lambda: ["TSLA", "HOOD", "RBLX", "UVXY", "TEM", "GOOGL"])
     keywords: List[str] = field(default_factory=lambda: ["BLOCK", "TRADE", "SWEEP", "UNUSUAL"])
+    
+    # Adding the missing interval attributes back into the config.
+    check_interval: int = int(os.environ.get('CHECK_INTERVAL', 300))  # 5 minutes
+    rush_interval: int = int(os.environ.get('RUSH_INTERVAL', 60))     # 1 minute
+
     trading_hours: TradingHours = field(default_factory=TradingHours)
     timezone: Timezone = field(default_factory=Timezone)
 
 def get_config() -> Config:
     """
     Initializes and returns the main application configuration.
-    This function MUST return an instance of the 'Config' class.
     """
     return Config()
