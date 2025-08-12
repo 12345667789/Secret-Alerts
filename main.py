@@ -2,7 +2,7 @@ import os
 import logging
 import pandas as pd
 from collections import deque
-from flask import Flask, render_template_string, request, redirect, url_for
+from flask import Flask, render_template_string, request, redirect, url_for, jsonify
 from google.cloud import firestore
 from datetime import datetime
 import pytz
@@ -16,12 +16,46 @@ from monitors.cboe_monitor import ShortSaleMonitor
 from testing.time_travel_tester import run_time_travel_test, get_test_suggestions
 
 # --- Trust Dashboard Integration (Step 1) ---
-from trust_dashboard import HealthMonitor, start_trust_dashboard_server
+# The HealthMonitor class is now part of this file.
+# The separate server logic has been removed.
+class HealthMonitor:
+    """
+    A thread-safe class to track the health and activity of the monitoring system.
+    """
+    def __init__(self, max_log_size=100, max_ledger_size=200):
+        self.lock = threading.Lock()
+        self.cst = pytz.timezone('America/Chicago')
+        self.last_check_status = {"timestamp": None, "successful": False, "file_hash": "N/A", "error_message": "No checks run yet."}
+        self.transaction_log = deque(maxlen=max_log_size)
+        self.alert_ledger = deque(maxlen=max_ledger_size)
+        self.log_transaction("System Initialized", "INFO")
+
+    def _get_current_time_str(self):
+        return datetime.now(self.cst).strftime('%Y-%m-%d %H:%M:%S CST')
+
+    def record_check_attempt(self, success: bool, file_hash: str = None, error: str = None):
+        with self.lock:
+            self.last_check_status = {"timestamp": self._get_current_time_str(), "successful": success, "file_hash": file_hash if success else "FAILED", "error_message": error}
+        if success:
+            self.log_transaction(f"Data fetch successful. Hash: {file_hash[:12]}...", "SUCCESS")
+        else:
+            self.log_transaction(f"Data fetch FAILED. Reason: {error}", "ERROR")
+
+    def log_transaction(self, message: str, level: str = "INFO"):
+        with self.lock:
+            self.transaction_log.appendleft({"timestamp": self._get_current_time_str(), "message": message, "level": level})
+
+    def record_alert_sent(self, alert_type: str, symbol: str, details: str):
+        with self.lock:
+            self.alert_ledger.appendleft({"timestamp": self._get_current_time_str(), "alert_type": alert_type, "symbol": symbol, "details": details})
+        self.log_transaction(f"Alert sent for {symbol} ({alert_type})", "SUCCESS")
+
+    def get_health_snapshot(self):
+        with self.lock:
+            return {"last_check": self.last_check_status.copy(), "transactions": list(self.transaction_log), "alerts": list(self.alert_ledger)}
 
 # --- Log Capturing Setup ---
-# This setup remains useful for the primary dashboard's log viewer
 recent_logs = deque(maxlen=20)
-
 class CaptureLogsHandler(logging.Handler):
     def emit(self, record):
         recent_logs.append(self.format(record))
@@ -39,18 +73,11 @@ root_logger.addHandler(console_handler)
 # --- Configuration ---
 app = Flask(__name__)
 VIP_SYMBOLS = ['TSLA', 'AAPL', 'GOOG', 'TSLZ', 'ETQ']
-
-# Initialize template manager
 template_manager = AlertTemplateManager(vip_symbols=VIP_SYMBOLS)
-
-# --- Trust Dashboard Integration (Step 2) ---
-# Create a single, shared instance of the HealthMonitor
-health_monitor = HealthMonitor()
-
+health_monitor = HealthMonitor() # Create a single, shared instance
 
 # --- Firestore Config Functions ---
 def get_config_from_firestore(doc_id, field_id):
-    """Fetches a specific config value from Firestore."""
     try:
         db = firestore.Client()
         doc_ref = db.collection('app_config').document(doc_id)
@@ -73,14 +100,13 @@ class AlertManager:
         self.template_manager = template_manager
     
     def send_formatted_alert(self, alert_data):
-        """Send a pre-formatted alert"""
         return self.discord_client.send_alert(
             title=alert_data['title'],
             message=alert_data['message'],
             color=alert_data['color']
         )
 
-# --- Web Dashboard Template (Existing Primary Dashboard) ---
+# --- Web Dashboard Templates ---
 DASHBOARD_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -120,7 +146,7 @@ DASHBOARD_TEMPLATE = """
                 <button type="submit" class="btn">📊 Report All Open Alerts</button>
             </form>
             <a href="/time-travel" class="btn time-travel-btn">🕐 Time Travel Test</a>
-            <a href="http://localhost:8081" target="_blank" class="btn trust-dashboard-btn">🛡️ Trust Dashboard</a>
+            <a href="/trust-dashboard" target="_blank" class="btn trust-dashboard-btn">🛡️ Trust Dashboard</a>
         </div>
         <div class="card">
             <h2>Recent Activity (Live)</h2>
@@ -131,57 +157,153 @@ DASHBOARD_TEMPLATE = """
 </html>
 """
 
+TRUST_DASHBOARD_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Secret_Alerts Trust Dashboard</title>
+    <style>
+        body {{ font-family: 'Segoe UI', system-ui, sans-serif; background-color: #121212; color: #e0e0e0; margin: 0; padding: 20px; }}
+        .container {{ max-width: 1400px; margin: 0 auto; display: grid; grid-template-columns: repeat(12, 1fr); gap: 20px; }}
+        .header {{ grid-column: 1 / -1; text-align: center; padding-bottom: 20px; border-bottom: 1px solid #333; }}
+        .header h1 {{ color: #4CAF50; margin: 0; }}
+        .module {{ background-color: #1e1e1e; border: 1px solid #333; border-radius: 8px; padding: 20px; box-shadow: 0 4px 8px rgba(0,0,0,0.2); }}
+        .module h2 {{ margin-top: 0; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }}
+        .data-freshness {{ grid-column: 1 / 5; }}
+        .transaction-log {{ grid-column: 5 / -1; }}
+        .alert-ledger {{ grid-column: 1 / -1; }}
+        .status-grid {{ display: grid; grid-template-columns: 1fr 2fr; gap: 10px; align-items: center; }}
+        .status-grid strong {{ color: #aaa; }}
+        .status-value {{ font-family: 'Courier New', monospace; font-size: 1.1em; word-wrap: break-word; }}
+        .status-good {{ color: #66bb6a; }}
+        .status-bad {{ color: #ef5350; }}
+        .log-table, .ledger-table {{ width: 100%; border-collapse: collapse; }}
+        .log-table th, .log-table td, .ledger-table th, .ledger-table td {{ padding: 12px; text-align: left; border-bottom: 1px solid #333; }}
+        .log-table th, .ledger-table th {{ background-color: #2a2a2a; }}
+        .log-level-SUCCESS {{ color: #66bb6a; }}
+        .log-level-ERROR {{ color: #ef5350; }}
+        .log-level-WARN {{ color: #ffa726; }}
+        .log-level-INFO {{ color: #42a5f5; }}
+        .table-container {{ max-height: 400px; overflow-y: auto; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><h1>🛡️ Secret_Alerts Trust Dashboard</h1></div>
+        <div class="module data-freshness">
+            <h2>1. Data Freshness</h2>
+            <div id="freshness-content">Loading...</div>
+        </div>
+        <div class="module transaction-log">
+            <h2>2. Recent Activity Log</h2>
+            <div class="table-container">
+                <table class="log-table">
+                    <thead><tr><th>Time</th><th>Level</th><th>Message</th></tr></thead>
+                    <tbody id="log-content"><tr><td colspan="3">Loading...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+        <div class="module alert-ledger">
+            <h2>3. Alert Ledger (Confirmed Sent)</h2>
+            <div class="table-container">
+                <table class="ledger-table">
+                    <thead><tr><th>Time</th><th>Type</th><th>Symbol</th><th>Details</th></tr></thead>
+                    <tbody id="ledger-content"><tr><td colspan="4">Loading...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <script>
+        function updateDashboard() {{
+            fetch('/api/health')
+                .then(response => response.json())
+                .then(data => {{
+                    const freshnessDiv = document.getElementById('freshness-content');
+                    const lastCheck = data.last_check;
+                    const successClass = lastCheck.successful ? 'status-good' : 'status-bad';
+                    const successText = lastCheck.successful ? 'Success' : 'Failed';
+                    freshnessDiv.innerHTML = `
+                        <div class="status-grid">
+                            <strong>Last Check:</strong><span class="status-value">${{lastCheck.timestamp || 'N/A'}}</span>
+                            <strong>Status:</strong><span class="status-value ${{successClass}}">${{successText}}</span>
+                            <strong>File Hash:</strong><span class="status-value">${{lastCheck.file_hash}}</span>
+                            <strong>Details:</strong><span class="status-value">${{lastCheck.error_message || 'OK'}}</span>
+                        </div>
+                    `;
+                    const logBody = document.getElementById('log-content');
+                    logBody.innerHTML = '';
+                    if (data.transactions.length === 0) {{ logBody.innerHTML = '<tr><td colspan="3">No transactions logged yet.</td></tr>'; }}
+                    else {{ data.transactions.forEach(log => {{
+                        const row = logBody.insertRow();
+                        row.innerHTML = `<td>${{log.timestamp}}</td><td class="log-level-${{log.level}}">${{log.level}}</td><td>${{log.message}}</td>`;
+                    }});}}
+                    const ledgerBody = document.getElementById('ledger-content');
+                    ledgerBody.innerHTML = '';
+                    if (data.alerts.length === 0) {{ ledgerBody.innerHTML = '<tr><td colspan="4">No alerts sent yet.</td></tr>'; }}
+                    else {{ data.alerts.forEach(alert => {{
+                        const row = ledgerBody.insertRow();
+                        row.innerHTML = `<td>${{alert.timestamp}}</td><td>${{alert.alert_type}}</td><td>${{alert.symbol}}</td><td>${{alert.details}}</td>`;
+                    }});}}
+                }})
+                .catch(error => console.error('Failed to update dashboard:', error));
+        }}
+        document.addEventListener('DOMContentLoaded', () => {{
+            updateDashboard();
+            setInterval(updateDashboard, 15000);
+        }});
+    </script>
+</body>
+</html>
+"""
+
+# --- Flask Routes ---
+
 @app.route('/')
 def dashboard():
     log_html = ""
     for log in reversed(recent_logs):
-        css_class = "error" if any(level in log for level in ["ERROR", "CRITICAL"]) else \
-                   "warning" if "WARNING" in log else "success"
+        css_class = "error" if any(level in log for level in ["ERROR", "CRITICAL"]) else "warning" if "WARNING" in log else "success"
         log_html += f'<div class="{css_class}">{log}</div>'
     return render_template_string(DASHBOARD_TEMPLATE, logs_html=log_html)
 
-# --- Main Check Endpoint (Modified for Trust Dashboard) ---
+@app.route('/trust-dashboard')
+def trust_dashboard_page():
+    """Serves the Trust Dashboard HTML page."""
+    return render_template_string(TRUST_DASHBOARD_TEMPLATE)
+
+@app.route('/api/health')
+def health_api():
+    """Serves the latest health data as JSON."""
+    return jsonify(health_monitor.get_health_snapshot())
+
 @app.route('/run-check', methods=['POST'])
 def run_check_endpoint():
     logging.info("Check triggered by Cloud Scheduler for short sale breakers.")
     monitor = ShortSaleMonitor()
-    
     try:
-        # Fetch raw data for hashing
-        # NOTE: Assumes your ShortSaleMonitor has a method to get raw bytes.
-        # If not, you'll need to add it.
         raw_data_bytes = monitor.fetch_raw_data()
         if raw_data_bytes is None:
             raise ValueError("Failed to fetch raw data from CBOE.")
-            
         file_hash = hashlib.md5(raw_data_bytes).hexdigest()
         health_monitor.record_check_attempt(success=True, file_hash=file_hash)
-
         webhook_url = get_config_from_firestore('discord_webhooks', 'short_sale_alerts')
         if not webhook_url: 
             raise ValueError("Webhook URL not found in Firestore")
-        
         discord_client = DiscordClient(webhook_url=webhook_url)
         alert_manager = AlertManager(discord_client, template_manager)
-        
         logging.info("Checking for new and ended breakers...")
-        # Use the already fetched raw data to create the dataframe
         new_breakers_df, ended_breakers_df = monitor.check_for_new_and_ended_breakers(raw_data_bytes)
-        
         log_msg = f"Analysis complete. Found {len(new_breakers_df)} new, {len(ended_breakers_df)} ended."
         health_monitor.log_transaction(log_msg, "INFO")
         logging.info(log_msg)
-
         if not new_breakers_df.empty or not ended_breakers_df.empty:
             formatter = template_manager.get_formatter('short_sale')
             alert_data = formatter.format_changes_alert(new_breakers_df, ended_breakers_df)
-            
             logging.info("Sending Discord alert...")
             success = alert_manager.send_formatted_alert(alert_data)
-            
             if success:
                 logging.info("Alert sent successfully")
-                # Record each new and ended alert in the ledger
                 for _, row in new_breakers_df.iterrows():
                     health_monitor.record_alert_sent("NEW_BREAKER", row['Symbol'], f"Trigger: {row['Trigger Time']}")
                 for _, row in ended_breakers_df.iterrows():
@@ -191,17 +313,15 @@ def run_check_endpoint():
                 health_monitor.log_transaction("Discord alert failed to send.", "ERROR")
         else:
             logging.info("Check finished. No new or ended circuit breakers found.")
-            
         return "Check completed successfully.", 200
-        
     except Exception as e:
         error_msg = f"An error occurred during the scheduled check: {e}"
         logging.error(error_msg, exc_info=True)
-        # Record the failure in the Trust Dashboard
         health_monitor.record_check_attempt(success=False, error=str(e))
         return "An error occurred during the check.", 500
 
 # --- Other Endpoints (Unchanged) ---
+# ... (The code for /time-travel, /report-open-alerts, etc. remains here) ...
 @app.route('/time-travel')
 def time_travel_page():
     """Serve the time travel testing interface"""
@@ -422,7 +542,6 @@ def report_open_alerts():
     
     return redirect(url_for('dashboard'))
 
-# --- Scheduled Report Endpoints ---
 @app.route('/report-morning-summary', methods=['POST'])
 def report_morning_summary():
     return _send_scheduled_report('morning')
@@ -485,13 +604,6 @@ def _send_scheduled_report(report_type):
 
 # --- Application Startup ---
 if __name__ == '__main__':
-    # --- Trust Dashboard Integration (Step 3) ---
-    # Start the Trust Dashboard in a separate thread on a different port
-    try:
-        start_trust_dashboard_server(health_monitor, port=8081)
-    except Exception as e:
-        logging.critical(f"Could not start Trust Dashboard: {e}")
-
-    # Start the main Flask application
-    # Note: For production, you would use a proper WSGI server like Gunicorn
+    # The Trust Dashboard is now part of the Flask app and doesn't need a separate server.
+    # The main app will handle all routes.
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=True)
