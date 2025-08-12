@@ -17,7 +17,7 @@ class TimeTravelTester:
     """
     
     def __init__(self, vip_symbols=None):
-        self.vip_symbols = vip_symbols or ['TSLA', 'AAPL', 'GOOG', 'NVDA']
+        self.vip_symbols = vip_symbols or []
         self.template_manager = AlertTemplateManager(vip_symbols=self.vip_symbols)
         self.cst = pytz.timezone('America/Chicago')
         
@@ -70,11 +70,27 @@ class TimeTravelTester:
         """
         Create before/after states based on target time
         """
-        # Convert string dates to datetime for comparison
+        # Convert string dates to datetime for comparison - FIX: Handle data types properly
         current_data = current_data.copy()
-        current_data['trigger_datetime'] = pd.to_datetime(
-            current_data['Trigger Date'] + ' ' + current_data['Trigger Time']
-        )
+        
+        # Convert Trigger Date and Time to datetime, handling different data types
+        try:
+            # Combine date and time columns into datetime
+            current_data['trigger_datetime'] = pd.to_datetime(
+                current_data['Trigger Date'].astype(str) + ' ' + 
+                current_data['Trigger Time'].astype(str)
+            )
+        except Exception as e:
+            logging.error(f"Error converting datetime: {e}")
+            # Fallback: try different approach
+            current_data['trigger_datetime'] = pd.to_datetime(
+                current_data['Trigger Date'].astype(str) + ' ' + 
+                current_data['Trigger Time'].astype(str),
+                errors='coerce'
+            )
+        
+        # Remove any rows where datetime conversion failed
+        current_data = current_data.dropna(subset=['trigger_datetime'])
         
         # Create "before" state - all alerts that existed before target time
         before_mask = current_data['trigger_datetime'] < target_time
@@ -84,14 +100,18 @@ class TimeTravelTester:
         if 'End Date' in before_state.columns and 'End Time' in before_state.columns:
             for idx, row in before_state.iterrows():
                 if pd.notnull(row['End Date']) and pd.notnull(row['End Time']):
-                    end_datetime = pd.to_datetime(f"{row['End Date']} {row['End Time']}")
-                    if end_datetime >= target_time:
-                        # This alert hadn't ended yet at target time
+                    try:
+                        end_datetime = pd.to_datetime(f"{row['End Date']} {row['End Time']}")
+                        if end_datetime >= target_time:
+                            # This alert hadn't ended yet at target time
+                            before_state.at[idx, 'End Date'] = None
+                            before_state.at[idx, 'End Time'] = None
+                    except:
+                        # If conversion fails, assume it hadn't ended
                         before_state.at[idx, 'End Date'] = None
                         before_state.at[idx, 'End Time'] = None
         
         # Create "after" state - add alerts that triggered AT the target time
-        target_date = target_time.strftime('%Y-%m-%d')
         target_time_window = target_time + timedelta(minutes=1)  # 1-minute window
         
         new_at_target = current_data[
@@ -253,7 +273,8 @@ class TimeTravelTester:
                         "symbol": row['Symbol'],
                         "is_vip": row['Symbol'] in self.vip_symbols
                     })
-                except:
+                except Exception as e:
+                    logging.debug(f"Skipping suggestion due to date parsing error: {e}")
                     continue
             
             return suggestions[:5]  # Return top 5 suggestions
