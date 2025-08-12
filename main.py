@@ -6,15 +6,20 @@ from flask import Flask, render_template_string, request, redirect, url_for
 from google.cloud import firestore
 from datetime import datetime
 import pytz
+import hashlib
+import threading
 
 # Import our modular components
 from alerts.discord_client import DiscordClient
 from alerts.templates import AlertTemplateManager
 from monitors.cboe_monitor import ShortSaleMonitor
-# NEW: Import the time travel tester
 from testing.time_travel_tester import run_time_travel_test, get_test_suggestions
 
+# --- Trust Dashboard Integration (Step 1) ---
+from trust_dashboard import HealthMonitor, start_trust_dashboard_server
+
 # --- Log Capturing Setup ---
+# This setup remains useful for the primary dashboard's log viewer
 recent_logs = deque(maxlen=20)
 
 class CaptureLogsHandler(logging.Handler):
@@ -37,6 +42,11 @@ VIP_SYMBOLS = ['TSLA', 'AAPL', 'GOOG', 'TSLZ', 'ETQ']
 
 # Initialize template manager
 template_manager = AlertTemplateManager(vip_symbols=VIP_SYMBOLS)
+
+# --- Trust Dashboard Integration (Step 2) ---
+# Create a single, shared instance of the HealthMonitor
+health_monitor = HealthMonitor()
+
 
 # --- Firestore Config Functions ---
 def get_config_from_firestore(doc_id, field_id):
@@ -70,7 +80,7 @@ class AlertManager:
             color=alert_data['color']
         )
 
-# --- Web Dashboard Template ---
+# --- Web Dashboard Template (Existing Primary Dashboard) ---
 DASHBOARD_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -88,6 +98,8 @@ DASHBOARD_TEMPLATE = """
         .btn:hover { background: #0077cc; }
         .time-travel-btn { background: #9c27b0; }
         .time-travel-btn:hover { background: #7b1fa2; }
+        .trust-dashboard-btn { background: #4CAF50; }
+        .trust-dashboard-btn:hover { background: #45a049; }
         .form-group { margin-bottom: 1rem; }
         input[type="password"] { background: #0a0e27; border: 1px solid #00d9ff; color: #fff; padding: 0.5rem; border-radius: 4px; }
         .success { color: #28a745; }
@@ -100,7 +112,7 @@ DASHBOARD_TEMPLATE = """
         <div class="header"><h1>🚀 Secret_Alerts Dashboard</h1></div>
         <div class="card">
             <h2>System Controls</h2>
-            <form action="/report-open-alerts" method="post">
+            <form action="/report-open-alerts" method="post" style="display: inline;">
                 <div class="form-group">
                     <label for="password">Password:</label>
                     <input type="password" id="password" name="password" required>
@@ -108,6 +120,7 @@ DASHBOARD_TEMPLATE = """
                 <button type="submit" class="btn">📊 Report All Open Alerts</button>
             </form>
             <a href="/time-travel" class="btn time-travel-btn">🕐 Time Travel Test</a>
+            <a href="http://localhost:8081" target="_blank" class="btn trust-dashboard-btn">🛡️ Trust Dashboard</a>
         </div>
         <div class="card">
             <h2>Recent Activity (Live)</h2>
@@ -127,7 +140,68 @@ def dashboard():
         log_html += f'<div class="{css_class}">{log}</div>'
     return render_template_string(DASHBOARD_TEMPLATE, logs_html=log_html)
 
-# --- NEW: Time Travel Testing Routes ---
+# --- Main Check Endpoint (Modified for Trust Dashboard) ---
+@app.route('/run-check', methods=['POST'])
+def run_check_endpoint():
+    logging.info("Check triggered by Cloud Scheduler for short sale breakers.")
+    monitor = ShortSaleMonitor()
+    
+    try:
+        # Fetch raw data for hashing
+        # NOTE: Assumes your ShortSaleMonitor has a method to get raw bytes.
+        # If not, you'll need to add it.
+        raw_data_bytes = monitor.fetch_raw_data()
+        if raw_data_bytes is None:
+            raise ValueError("Failed to fetch raw data from CBOE.")
+            
+        file_hash = hashlib.md5(raw_data_bytes).hexdigest()
+        health_monitor.record_check_attempt(success=True, file_hash=file_hash)
+
+        webhook_url = get_config_from_firestore('discord_webhooks', 'short_sale_alerts')
+        if not webhook_url: 
+            raise ValueError("Webhook URL not found in Firestore")
+        
+        discord_client = DiscordClient(webhook_url=webhook_url)
+        alert_manager = AlertManager(discord_client, template_manager)
+        
+        logging.info("Checking for new and ended breakers...")
+        # Use the already fetched raw data to create the dataframe
+        new_breakers_df, ended_breakers_df = monitor.check_for_new_and_ended_breakers(raw_data_bytes)
+        
+        log_msg = f"Analysis complete. Found {len(new_breakers_df)} new, {len(ended_breakers_df)} ended."
+        health_monitor.log_transaction(log_msg, "INFO")
+        logging.info(log_msg)
+
+        if not new_breakers_df.empty or not ended_breakers_df.empty:
+            formatter = template_manager.get_formatter('short_sale')
+            alert_data = formatter.format_changes_alert(new_breakers_df, ended_breakers_df)
+            
+            logging.info("Sending Discord alert...")
+            success = alert_manager.send_formatted_alert(alert_data)
+            
+            if success:
+                logging.info("Alert sent successfully")
+                # Record each new and ended alert in the ledger
+                for _, row in new_breakers_df.iterrows():
+                    health_monitor.record_alert_sent("NEW_BREAKER", row['Symbol'], f"Trigger: {row['Trigger Time']}")
+                for _, row in ended_breakers_df.iterrows():
+                    health_monitor.record_alert_sent("ENDED_BREAKER", row['Symbol'], f"Ended: {row['End Time']}")
+            else:
+                logging.error("Failed to send alert")
+                health_monitor.log_transaction("Discord alert failed to send.", "ERROR")
+        else:
+            logging.info("Check finished. No new or ended circuit breakers found.")
+            
+        return "Check completed successfully.", 200
+        
+    except Exception as e:
+        error_msg = f"An error occurred during the scheduled check: {e}"
+        logging.error(error_msg, exc_info=True)
+        # Record the failure in the Trust Dashboard
+        health_monitor.record_check_attempt(success=False, error=str(e))
+        return "An error occurred during the check.", 500
+
+# --- Other Endpoints (Unchanged) ---
 @app.route('/time-travel')
 def time_travel_page():
     """Serve the time travel testing interface"""
@@ -305,46 +379,6 @@ def time_travel_test():
         logging.error(f"Time travel test error: {e}")
         return f"Test failed: {str(e)}", 500
 
-# --- Main Check Endpoint ---
-@app.route('/run-check', methods=['POST'])
-def run_check_endpoint():
-    logging.info("Check triggered by Cloud Scheduler for short sale breakers.")
-    try:
-        webhook_url = get_config_from_firestore('discord_webhooks', 'short_sale_alerts')
-        if not webhook_url: 
-            logging.error("Webhook URL not found in Firestore")
-            return "Webhook URL not configured in Firestore.", 500
-        
-        discord_client = DiscordClient(webhook_url=webhook_url)
-        alert_manager = AlertManager(discord_client, template_manager)
-        monitor = ShortSaleMonitor()
-        
-        logging.info("Checking for new and ended breakers...")
-        new_breakers_df, ended_breakers_df = monitor.check_for_new_and_ended_breakers()
-        
-        logging.info(f"Found {len(new_breakers_df)} new breakers and {len(ended_breakers_df)} ended breakers")
-
-        if not new_breakers_df.empty or not ended_breakers_df.empty:
-            formatter = template_manager.get_formatter('short_sale')
-            alert_data = formatter.format_changes_alert(new_breakers_df, ended_breakers_df)
-            
-            logging.info("Sending Discord alert...")
-            success = alert_manager.send_formatted_alert(alert_data)
-            
-            if success:
-                logging.info("Alert sent successfully")
-            else:
-                logging.error("Failed to send alert")
-        else:
-            logging.info("Check finished. No new or ended circuit breakers found.")
-            
-        return "Check completed successfully.", 200
-        
-    except Exception as e:
-        logging.error(f"An error occurred during the scheduled check: {e}", exc_info=True)
-        return "An error occurred during the check.", 500
-
-# --- Manual Report Endpoint ---
 @app.route('/report-open-alerts', methods=['POST'])
 def report_open_alerts():
     logging.info("Open alerts report triggered by user.")
@@ -449,5 +483,15 @@ def _send_scheduled_report(report_type):
         logging.error(f"Error generating {report_type} report: {e}", exc_info=True)
         return f"Error occurred while generating {report_type} report.", 500
 
+# --- Application Startup ---
 if __name__ == '__main__':
+    # --- Trust Dashboard Integration (Step 3) ---
+    # Start the Trust Dashboard in a separate thread on a different port
+    try:
+        start_trust_dashboard_server(health_monitor, port=8081)
+    except Exception as e:
+        logging.critical(f"Could not start Trust Dashboard: {e}")
+
+    # Start the main Flask application
+    # Note: For production, you would use a proper WSGI server like Gunicorn
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=True)
