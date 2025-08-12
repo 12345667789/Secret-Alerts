@@ -153,16 +153,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         <div class="form-group">
                             <label for="test_time">Test Time (YYYY-MM-DD HH:MM:SS):</label>
                             <input type="text" id="test_time" name="test_time" 
-                                   placeholder="2025-08-12 09:35:00" required>
+                                   placeholder="2025-08-12 13:13:00" required>
                         </div>
                         <button type="submit" class="btn">🚀 Run Time Travel Test</button>
                     </form>
                     
-                    <p><strong>Examples:</strong></p>
+                    <p><strong>Perfect Test for ETQ Alert:</strong></p>
                     <ul>
-                        <li><code>2025-08-12 09:33:00</code> - Test CRWV alerts</li>
-                        <li><code>2025-08-11 12:09:00</code> - Test TESLA alert</li>
-                        <li><code>2025-08-11 09:44:00</code> - Test ETHER alert</li>
+                        <li><code>2025-08-12 13:13:00</code> - Test the ETQ alert that just triggered!</li>
                     </ul>
                 </div>
                 
