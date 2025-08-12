@@ -31,11 +31,11 @@ class HealthMonitor:
     def _get_current_time_str(self):
         return datetime.now(self.cst).strftime('%Y-%m-%d %H:%M:%S CST')
 
-    def record_check_attempt(self, success: bool, file_hash: str = None, error: str = None):
+    def record_check_attempt(self, success: bool, file_hash: str = "N/A", error: str = None):
         with self.lock:
             self.last_check_status = {"timestamp": self._get_current_time_str(), "successful": success, "file_hash": file_hash if success else "FAILED", "error_message": error}
         if success:
-            self.log_transaction(f"Data fetch successful. Hash: {file_hash[:12]}...", "SUCCESS")
+            self.log_transaction(f"Data fetch and analysis successful.", "SUCCESS")
         else:
             self.log_transaction(f"Data fetch FAILED. Reason: {error}", "ERROR")
 
@@ -43,10 +43,17 @@ class HealthMonitor:
         with self.lock:
             self.transaction_log.appendleft({"timestamp": self._get_current_time_str(), "message": message, "level": level})
 
-    def record_alert_sent(self, alert_type: str, symbol: str, details: str):
+    def record_alert_sent(self, alert_id: str, alert_type: str, symbol: str, details: str):
+        """Records a sent alert with a unique, persistent ID."""
         with self.lock:
-            self.alert_ledger.appendleft({"timestamp": self._get_current_time_str(), "alert_type": alert_type, "symbol": symbol, "details": details})
-        self.log_transaction(f"Alert sent for {symbol} ({alert_type})", "SUCCESS")
+            self.alert_ledger.appendleft({
+                "alert_id": alert_id,
+                "timestamp": self._get_current_time_str(),
+                "alert_type": alert_type,
+                "symbol": symbol,
+                "details": details
+            })
+        self.log_transaction(f"Alert Sent (ID: {alert_id}) for {symbol}", "SUCCESS")
 
     def get_health_snapshot(self):
         with self.lock:
@@ -185,8 +192,8 @@ DASHBOARD_TEMPLATE = """
                 <h2>🛡️ 3. Alert Ledger (Confirmed Sent)</h2>
                 <div class="table-container">
                     <table class="ledger-table">
-                        <thead><tr><th>Time</th><th>Type</th><th>Symbol</th><th>Details</th></tr></thead>
-                        <tbody id="ledger-content"><tr><td colspan="4">Loading...</td></tr></tbody>
+                        <thead><tr><th>Alert ID</th><th>Time</th><th>Type</th><th>Symbol</th><th>Details</th></tr></thead>
+                        <tbody id="ledger-content"><tr><td colspan="5">Loading...</td></tr></tbody>
                     </table>
                 </div>
             </div>
@@ -225,10 +232,10 @@ DASHBOARD_TEMPLATE = """
                     });}
                     const ledgerBody = document.getElementById('ledger-content');
                     ledgerBody.innerHTML = '';
-                    if (data.alerts.length === 0) { ledgerBody.innerHTML = '<tr><td colspan="4">No alerts sent yet.</td></tr>'; }
+                    if (data.alerts.length === 0) { ledgerBody.innerHTML = '<tr><td colspan="5">No alerts sent yet.</td></tr>'; }
                     else { data.alerts.forEach(alert => {
                         const row = ledgerBody.insertRow();
-                        row.innerHTML = `<td>${alert.timestamp}</td><td>${alert.alert_type}</td><td>${alert.symbol}</td><td>${alert.details}</td>`;
+                        row.innerHTML = `<td>${alert.alert_id}</td><td>${alert.timestamp}</td><td>${alert.alert_type}</td><td>${alert.symbol}</td><td>${alert.details}</td>`;
                     });}
                 })
                 .catch(error => console.error('Failed to update dashboard:', error));
@@ -263,38 +270,58 @@ def run_check_endpoint():
     logging.info("Check triggered by Cloud Scheduler for short sale breakers.")
     monitor = ShortSaleMonitor()
     try:
-        raw_data_bytes = monitor.fetch_raw_data()
-        if raw_data_bytes is None:
-            raise ValueError("Failed to fetch raw data from CBOE.")
-        file_hash = hashlib.md5(raw_data_bytes).hexdigest()
-        health_monitor.record_check_attempt(success=True, file_hash=file_hash)
+        # This is the main check. We assume the monitor handles its own data fetching.
+        new_breakers_df, ended_breakers_df = monitor.check_for_new_and_ended_breakers()
+        
+        # If the check is successful, we record it.
+        health_monitor.record_check_attempt(success=True)
+        
         webhook_url = get_config_from_firestore('discord_webhooks', 'short_sale_alerts')
         if not webhook_url: 
             raise ValueError("Webhook URL not found in Firestore")
+        
         discord_client = DiscordClient(webhook_url=webhook_url)
         alert_manager = AlertManager(discord_client, template_manager)
-        logging.info("Checking for new and ended breakers...")
-        new_breakers_df, ended_breakers_df = monitor.check_for_new_and_ended_breakers(raw_data_bytes)
+        
         log_msg = f"Analysis complete. Found {len(new_breakers_df)} new, {len(ended_breakers_df)} ended."
         health_monitor.log_transaction(log_msg, "INFO")
         logging.info(log_msg)
+
         if not new_breakers_df.empty or not ended_breakers_df.empty:
             formatter = template_manager.get_formatter('short_sale')
             alert_data = formatter.format_changes_alert(new_breakers_df, ended_breakers_df)
+            
             logging.info("Sending Discord alert...")
             success = alert_manager.send_formatted_alert(alert_data)
+            
             if success:
                 logging.info("Alert sent successfully")
                 for _, row in new_breakers_df.iterrows():
-                    health_monitor.record_alert_sent("NEW_BREAKER", row['Symbol'], f"Trigger: {row['Trigger Time']}")
+                    # Generate persistent ID
+                    alert_id = f"{row['Symbol']}-{row['Trigger Date']}-{row['Trigger Time']}".replace(' ', '_').replace(':', '')
+                    health_monitor.record_alert_sent(
+                        alert_id=alert_id,
+                        alert_type="NEW_BREAKER", 
+                        symbol=row['Symbol'], 
+                        details=f"Trigger: {row['Trigger Time']}"
+                    )
                 for _, row in ended_breakers_df.iterrows():
-                    health_monitor.record_alert_sent("ENDED_BREAKER", row['Symbol'], f"Ended: {row['End Time']}")
+                    # Generate persistent ID
+                    alert_id = f"{row['Symbol']}-{row['Trigger Date']}-{row['Trigger Time']}".replace(' ', '_').replace(':', '')
+                    health_monitor.record_alert_sent(
+                        alert_id=alert_id,
+                        alert_type="ENDED_BREAKER", 
+                        symbol=row['Symbol'], 
+                        details=f"Ended: {row['End Time']}"
+                    )
             else:
                 logging.error("Failed to send alert")
                 health_monitor.log_transaction("Discord alert failed to send.", "ERROR")
         else:
             logging.info("Check finished. No new or ended circuit breakers found.")
+            
         return "Check completed successfully.", 200
+        
     except Exception as e:
         error_msg = f"An error occurred during the scheduled check: {e}"
         logging.error(error_msg, exc_info=True)
@@ -302,7 +329,6 @@ def run_check_endpoint():
         return "An error occurred during the check.", 500
 
 # --- Other Endpoints (Unchanged) ---
-# ... (The code for /time-travel, /report-open-alerts, etc. remains here) ...
 @app.route('/time-travel')
 def time_travel_page():
     """Serve the time travel testing interface"""
