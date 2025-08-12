@@ -15,9 +15,7 @@ from alerts.templates import AlertTemplateManager
 from monitors.cboe_monitor import ShortSaleMonitor
 from testing.time_travel_tester import run_time_travel_test, get_test_suggestions
 
-# --- Trust Dashboard Integration (Step 1) ---
-# The HealthMonitor class is now part of this file.
-# The separate server logic has been removed.
+# --- Health Monitor Class ---
 class HealthMonitor:
     """
     A thread-safe class to track the health and activity of the monitoring system.
@@ -106,36 +104,55 @@ class AlertManager:
             color=alert_data['color']
         )
 
-# --- Web Dashboard Templates ---
+# --- Unified Dashboard Template ---
 DASHBOARD_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Secret_Alerts Dashboard</title>
-    <meta http-equiv="refresh" content="30">
+    <title>Secret_Alerts Unified Dashboard</title>
     <style>
-        body { background: #1a1a2e; color: #e0e0e0; font-family: monospace; margin: 0; padding: 2rem; }
-        .container { max-width: 1200px; margin: 0 auto; }
+        body { background: #121212; color: #e0e0e0; font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; padding: 2rem; }
+        .container { max-width: 1400px; margin: 0 auto; }
         .header { text-align: center; margin-bottom: 2rem; }
-        .card { background: #16213e; padding: 1.5rem; border-radius: 12px; margin-bottom: 1rem; border-left: 4px solid #00d9ff; }
-        h1, h2 { color: #00d9ff; }
-        .log-box { height: 400px; overflow-y: auto; background: #0a0e27; padding: 1rem; border-radius: 8px; }
+        .header h1 { color: #00d9ff; }
+        .card { background: #1e1e1e; padding: 1.5rem; border-radius: 12px; margin-bottom: 1.5rem; border: 1px solid #333; box-shadow: 0 4px 8px rgba(0,0,0,0.2); }
+        h2 { color: #00d9ff; border-bottom: 2px solid #00d9ff; padding-bottom: 10px; }
+        .trust-header h2 { color: #4CAF50; border-bottom: 2px solid #4CAF50;}
+        .log-box { height: 300px; overflow-y: auto; background: #0a0e27; padding: 1rem; border-radius: 8px; font-family: monospace; }
         .btn { background: #0099ff; color: #fff; padding: 0.75rem 1.5rem; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block; margin: 0.25rem; border: none; cursor: pointer; }
         .btn:hover { background: #0077cc; }
         .time-travel-btn { background: #9c27b0; }
         .time-travel-btn:hover { background: #7b1fa2; }
-        .trust-dashboard-btn { background: #4CAF50; }
-        .trust-dashboard-btn:hover { background: #45a049; }
         .form-group { margin-bottom: 1rem; }
         input[type="password"] { background: #0a0e27; border: 1px solid #00d9ff; color: #fff; padding: 0.5rem; border-radius: 4px; }
         .success { color: #28a745; }
         .warning { color: #fca311; }
         .error { color: #e63946; }
+        
+        /* Trust Dashboard Styles */
+        .trust-container { display: grid; grid-template-columns: repeat(12, 1fr); gap: 20px; margin-top: 2rem; }
+        .data-freshness { grid-column: 1 / 5; }
+        .transaction-log { grid-column: 5 / -1; }
+        .alert-ledger { grid-column: 1 / -1; margin-top: 1.5rem; }
+        .status-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; align-items: center; }
+        .status-grid strong { color: #aaa; }
+        .status-value { font-family: 'Courier New', monospace; font-size: 1.1em; word-wrap: break-word; }
+        .status-good { color: #66bb6a; }
+        .status-bad { color: #ef5350; }
+        .log-table, .ledger-table { width: 100%; border-collapse: collapse; font-family: 'Courier New', monospace; }
+        .log-table th, .log-table td, .ledger-table th, .ledger-table td { padding: 12px; text-align: left; border-bottom: 1px solid #333; }
+        .log-table th, .ledger-table th { background-color: #2a2a2a; }
+        .log-level-SUCCESS { color: #66bb6a; }
+        .log-level-ERROR { color: #ef5350; }
+        .log-level-WARN { color: #ffa726; }
+        .log-level-INFO { color: #42a5f5; }
+        .table-container { max-height: 400px; overflow-y: auto; }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header"><h1>🚀 Secret_Alerts Dashboard</h1></div>
+        <div class="header"><h1>🚀 Secret_Alerts Unified Dashboard</h1></div>
+        
         <div class="card">
             <h2>System Controls</h2>
             <form action="/report-open-alerts" method="post" style="display: inline;">
@@ -146,113 +163,82 @@ DASHBOARD_TEMPLATE = """
                 <button type="submit" class="btn">📊 Report All Open Alerts</button>
             </form>
             <a href="/time-travel" class="btn time-travel-btn">🕐 Time Travel Test</a>
-            <a href="/trust-dashboard" target="_blank" class="btn trust-dashboard-btn">🛡️ Trust Dashboard</a>
         </div>
+
+        <div class="trust-container">
+            <div class="card data-freshness trust-header">
+                <h2>🛡️ 1. Data Freshness</h2>
+                <div id="freshness-content">Loading...</div>
+            </div>
+
+            <div class="card transaction-log trust-header">
+                <h2>🛡️ 2. Recent Activity Log</h2>
+                <div class="table-container">
+                    <table class="log-table">
+                        <thead><tr><th>Time</th><th>Level</th><th>Message</th></tr></thead>
+                        <tbody id="log-content"><tr><td colspan="3">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="card alert-ledger trust-header">
+                <h2>🛡️ 3. Alert Ledger (Confirmed Sent)</h2>
+                <div class="table-container">
+                    <table class="ledger-table">
+                        <thead><tr><th>Time</th><th>Type</th><th>Symbol</th><th>Details</th></tr></thead>
+                        <tbody id="ledger-content"><tr><td colspan="4">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
         <div class="card">
-            <h2>Recent Activity (Live)</h2>
+            <h2>Legacy Log Viewer</h2>
             <div class="log-box">{{ logs_html|safe }}</div>
         </div>
     </div>
-</body>
-</html>
-"""
 
-TRUST_DASHBOARD_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Secret_Alerts Trust Dashboard</title>
-    <style>
-        body {{ font-family: 'Segoe UI', system-ui, sans-serif; background-color: #121212; color: #e0e0e0; margin: 0; padding: 20px; }}
-        .container {{ max-width: 1400px; margin: 0 auto; display: grid; grid-template-columns: repeat(12, 1fr); gap: 20px; }}
-        .header {{ grid-column: 1 / -1; text-align: center; padding-bottom: 20px; border-bottom: 1px solid #333; }}
-        .header h1 {{ color: #4CAF50; margin: 0; }}
-        .module {{ background-color: #1e1e1e; border: 1px solid #333; border-radius: 8px; padding: 20px; box-shadow: 0 4px 8px rgba(0,0,0,0.2); }}
-        .module h2 {{ margin-top: 0; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }}
-        .data-freshness {{ grid-column: 1 / 5; }}
-        .transaction-log {{ grid-column: 5 / -1; }}
-        .alert-ledger {{ grid-column: 1 / -1; }}
-        .status-grid {{ display: grid; grid-template-columns: 1fr 2fr; gap: 10px; align-items: center; }}
-        .status-grid strong {{ color: #aaa; }}
-        .status-value {{ font-family: 'Courier New', monospace; font-size: 1.1em; word-wrap: break-word; }}
-        .status-good {{ color: #66bb6a; }}
-        .status-bad {{ color: #ef5350; }}
-        .log-table, .ledger-table {{ width: 100%; border-collapse: collapse; }}
-        .log-table th, .log-table td, .ledger-table th, .ledger-table td {{ padding: 12px; text-align: left; border-bottom: 1px solid #333; }}
-        .log-table th, .ledger-table th {{ background-color: #2a2a2a; }}
-        .log-level-SUCCESS {{ color: #66bb6a; }}
-        .log-level-ERROR {{ color: #ef5350; }}
-        .log-level-WARN {{ color: #ffa726; }}
-        .log-level-INFO {{ color: #42a5f5; }}
-        .table-container {{ max-height: 400px; overflow-y: auto; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header"><h1>🛡️ Secret_Alerts Trust Dashboard</h1></div>
-        <div class="module data-freshness">
-            <h2>1. Data Freshness</h2>
-            <div id="freshness-content">Loading...</div>
-        </div>
-        <div class="module transaction-log">
-            <h2>2. Recent Activity Log</h2>
-            <div class="table-container">
-                <table class="log-table">
-                    <thead><tr><th>Time</th><th>Level</th><th>Message</th></tr></thead>
-                    <tbody id="log-content"><tr><td colspan="3">Loading...</td></tr></tbody>
-                </table>
-            </div>
-        </div>
-        <div class="module alert-ledger">
-            <h2>3. Alert Ledger (Confirmed Sent)</h2>
-            <div class="table-container">
-                <table class="ledger-table">
-                    <thead><tr><th>Time</th><th>Type</th><th>Symbol</th><th>Details</th></tr></thead>
-                    <tbody id="ledger-content"><tr><td colspan="4">Loading...</td></tr></tbody>
-                </table>
-            </div>
-        </div>
-    </div>
+    {% raw %}
     <script>
-        function updateDashboard() {{
+        function updateDashboard() {
             fetch('/api/health')
                 .then(response => response.json())
-                .then(data => {{
+                .then(data => {
                     const freshnessDiv = document.getElementById('freshness-content');
                     const lastCheck = data.last_check;
                     const successClass = lastCheck.successful ? 'status-good' : 'status-bad';
                     const successText = lastCheck.successful ? 'Success' : 'Failed';
                     freshnessDiv.innerHTML = `
                         <div class="status-grid">
-                            <strong>Last Check:</strong><span class="status-value">${{lastCheck.timestamp || 'N/A'}}</span>
-                            <strong>Status:</strong><span class="status-value ${{successClass}}">${{successText}}</span>
-                            <strong>File Hash:</strong><span class="status-value">${{lastCheck.file_hash}}</span>
-                            <strong>Details:</strong><span class="status-value">${{lastCheck.error_message || 'OK'}}</span>
+                            <strong>Last Check:</strong><span class="status-value">${lastCheck.timestamp || 'N/A'}</span>
+                            <strong>Status:</strong><span class="status-value ${successClass}">${successText}</span>
+                            <strong>File Hash:</strong><span class="status-value">${lastCheck.file_hash}</span>
+                            <strong>Details:</strong><span class="status-value">${lastCheck.error_message || 'OK'}</span>
                         </div>
                     `;
                     const logBody = document.getElementById('log-content');
                     logBody.innerHTML = '';
-                    if (data.transactions.length === 0) {{ logBody.innerHTML = '<tr><td colspan="3">No transactions logged yet.</td></tr>'; }}
-                    else {{ data.transactions.forEach(log => {{
+                    if (data.transactions.length === 0) { logBody.innerHTML = '<tr><td colspan="3">No transactions logged yet.</td></tr>'; }
+                    else { data.transactions.forEach(log => {
                         const row = logBody.insertRow();
-                        row.innerHTML = `<td>${{log.timestamp}}</td><td class="log-level-${{log.level}}">${{log.level}}</td><td>${{log.message}}</td>`;
-                    }});}}
+                        row.innerHTML = `<td>${log.timestamp}</td><td class="log-level-${log.level}">${log.level}</td><td>${log.message}</td>`;
+                    });}
                     const ledgerBody = document.getElementById('ledger-content');
                     ledgerBody.innerHTML = '';
-                    if (data.alerts.length === 0) {{ ledgerBody.innerHTML = '<tr><td colspan="4">No alerts sent yet.</td></tr>'; }}
-                    else {{ data.alerts.forEach(alert => {{
+                    if (data.alerts.length === 0) { ledgerBody.innerHTML = '<tr><td colspan="4">No alerts sent yet.</td></tr>'; }
+                    else { data.alerts.forEach(alert => {
                         const row = ledgerBody.insertRow();
-                        row.innerHTML = `<td>${{alert.timestamp}}</td><td>${{alert.alert_type}}</td><td>${{alert.symbol}}</td><td>${{alert.details}}</td>`;
-                    }});}}
-                }})
+                        row.innerHTML = `<td>${alert.timestamp}</td><td>${alert.alert_type}</td><td>${alert.symbol}</td><td>${alert.details}</td>`;
+                    });}
+                })
                 .catch(error => console.error('Failed to update dashboard:', error));
-        }}
-        document.addEventListener('DOMContentLoaded', () => {{
+        }
+        document.addEventListener('DOMContentLoaded', () => {
             updateDashboard();
             setInterval(updateDashboard, 15000);
-        }});
+        });
     </script>
+    {% endraw %}
 </body>
 </html>
 """
@@ -266,11 +252,6 @@ def dashboard():
         css_class = "error" if any(level in log for level in ["ERROR", "CRITICAL"]) else "warning" if "WARNING" in log else "success"
         log_html += f'<div class="{css_class}">{log}</div>'
     return render_template_string(DASHBOARD_TEMPLATE, logs_html=log_html)
-
-@app.route('/trust-dashboard')
-def trust_dashboard_page():
-    """Serves the Trust Dashboard HTML page."""
-    return render_template_string(TRUST_DASHBOARD_TEMPLATE)
 
 @app.route('/api/health')
 def health_api():
