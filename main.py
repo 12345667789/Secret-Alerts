@@ -321,6 +321,13 @@ def run_check_endpoint():
             logging.info("Check finished. No new or ended circuit breakers found.")
             
         return "Check completed successfully.", 200
+    
+    except KeyError as e:
+        # This is the specific fix for the 'UniqueKey' error
+        error_msg = f"Data structure error: A required column is missing. Details: {e}"
+        logging.error(error_msg, exc_info=True)
+        health_monitor.record_check_attempt(success=False, error=error_msg)
+        return "An error occurred during the check due to a data structure issue.", 500
         
     except Exception as e:
         error_msg = f"An error occurred during the scheduled check: {e}"
