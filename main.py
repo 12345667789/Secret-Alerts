@@ -11,6 +11,8 @@ import pytz
 from alerts.discord_client import DiscordClient
 from alerts.templates import AlertTemplateManager
 from monitors.cboe_monitor import ShortSaleMonitor
+# NEW: Import the time travel tester
+from testing.time_travel_tester import run_time_travel_test, get_test_suggestions
 
 # --- Log Capturing Setup ---
 recent_logs = deque(maxlen=20)
@@ -31,7 +33,7 @@ root_logger.addHandler(console_handler)
 
 # --- Configuration ---
 app = Flask(__name__)
-VIP_SYMBOLS = ['TSLA', 'AAPL', 'GOOG', 'TSLZ']
+VIP_SYMBOLS = ['TSLA', 'AAPL', 'GOOG', 'TSLZ', 'ETQ']
 
 # Initialize template manager
 template_manager = AlertTemplateManager(vip_symbols=VIP_SYMBOLS)
@@ -105,7 +107,6 @@ DASHBOARD_TEMPLATE = """
                 </div>
                 <button type="submit" class="btn">📊 Report All Open Alerts</button>
             </form>
-            <a href="/test-alert" class="btn">🧪 Test Alert System</a>
             <a href="/time-travel" class="btn time-travel-btn">🕐 Time Travel Test</a>
         </div>
         <div class="card">
@@ -131,7 +132,6 @@ def dashboard():
 def time_travel_page():
     """Serve the time travel testing interface"""
     try:
-        from testing.time_travel_tester import get_test_suggestions
         suggestions = get_test_suggestions(VIP_SYMBOLS)
     except Exception as e:
         logging.error(f"Error getting test suggestions: {e}")
@@ -241,9 +241,6 @@ def time_travel_test():
         if not test_time:
             return "No test time provided", 400
         
-        # Import the time travel tester
-        from testing.time_travel_tester import run_time_travel_test
-        
         # Run the test
         results = run_time_travel_test(test_time, VIP_SYMBOLS)
         
@@ -257,11 +254,6 @@ def time_travel_test():
             """
         
         # Format the results (abbreviated for space)
-        before_alerts_html = ""
-        for alert in results['before_state']['sample_alerts']:
-            vip_badge = "⭐" if alert['is_vip'] else ""
-            before_alerts_html += f"<li>{vip_badge} <strong>{alert['symbol']}</strong> - {alert['security_name']} (Started {alert['trigger_time']})</li>"
-        
         new_alerts_html = ""
         for alert in results['detected_changes']['new_alert_details']:
             vip_badge = "⭐ VIP" if alert['is_vip'] else ""
@@ -313,29 +305,25 @@ def time_travel_test():
         logging.error(f"Time travel test error: {e}")
         return f"Test failed: {str(e)}", 500
 
-# --- Main Check Endpoint (UNCHANGED) ---
+# --- Main Check Endpoint ---
 @app.route('/run-check', methods=['POST'])
 def run_check_endpoint():
     logging.info("Check triggered by Cloud Scheduler for short sale breakers.")
     try:
-        # Get webhook URL
         webhook_url = get_config_from_firestore('discord_webhooks', 'short_sale_alerts')
         if not webhook_url: 
             logging.error("Webhook URL not found in Firestore")
             return "Webhook URL not configured in Firestore.", 500
         
-        # Initialize components
         discord_client = DiscordClient(webhook_url=webhook_url)
         alert_manager = AlertManager(discord_client, template_manager)
         monitor = ShortSaleMonitor()
         
-        # Check for changes
         logging.info("Checking for new and ended breakers...")
         new_breakers_df, ended_breakers_df = monitor.check_for_new_and_ended_breakers()
         
         logging.info(f"Found {len(new_breakers_df)} new breakers and {len(ended_breakers_df)} ended breakers")
 
-        # Send alert if there are changes
         if not new_breakers_df.empty or not ended_breakers_df.empty:
             formatter = template_manager.get_formatter('short_sale')
             alert_data = formatter.format_changes_alert(new_breakers_df, ended_breakers_df)
@@ -356,7 +344,7 @@ def run_check_endpoint():
         logging.error(f"An error occurred during the scheduled check: {e}", exc_info=True)
         return "An error occurred during the check.", 500
 
-# --- Manual Report Endpoint (UNCHANGED) ---
+# --- Manual Report Endpoint ---
 @app.route('/report-open-alerts', methods=['POST'])
 def report_open_alerts():
     logging.info("Open alerts report triggered by user.")
@@ -377,7 +365,6 @@ def report_open_alerts():
         alert_manager = AlertManager(discord_client, template_manager)
         monitor = ShortSaleMonitor()
         
-        # Get current data
         current_df = monitor.fetch_data()
         if current_df is None or current_df.empty:
             error_alert = {
@@ -388,10 +375,8 @@ def report_open_alerts():
             alert_manager.send_formatted_alert(error_alert)
             return redirect(url_for('dashboard'))
 
-        # Filter for open alerts
         open_alerts = current_df[pd.isnull(current_df['End Time'])]
         
-        # Format and send report
         formatter = template_manager.get_formatter('short_sale')
         alert_data = formatter.format_open_alerts_report(open_alerts)
         alert_manager.send_formatted_alert(alert_data)
@@ -403,7 +388,7 @@ def report_open_alerts():
     
     return redirect(url_for('dashboard'))
 
-# --- Scheduled Report Endpoints (UNCHANGED) ---
+# --- Scheduled Report Endpoints ---
 @app.route('/report-morning-summary', methods=['POST'])
 def report_morning_summary():
     return _send_scheduled_report('morning')
@@ -428,11 +413,9 @@ def _send_scheduled_report(report_type):
         alert_manager = AlertManager(discord_client, template_manager)
         monitor = ShortSaleMonitor()
         
-        # Get current data
         current_df = monitor.fetch_data()
         open_alerts = current_df[pd.isnull(current_df['End Time'])] if current_df is not None else pd.DataFrame()
         
-        # Get today's stats
         cst = pytz.timezone('America/Chicago')
         today_str = datetime.now(cst).strftime('%Y-%m-%d')
         
@@ -445,7 +428,6 @@ def _send_scheduled_report(report_type):
                 pd.notnull(current_df['End Time'])
             ])
         
-        # Format and send report
         formatter = template_manager.get_formatter('short_sale')
         alert_data = formatter.format_scheduled_report(
             report_type=report_type,
@@ -466,32 +448,6 @@ def _send_scheduled_report(report_type):
     except Exception as e:
         logging.error(f"Error generating {report_type} report: {e}", exc_info=True)
         return f"Error occurred while generating {report_type} report.", 500
-
-# --- Test Endpoint (UNCHANGED) ---
-@app.route('/test-alert')
-def test_alert():
-    """Test the alert system"""
-    try:
-        webhook_url = get_config_from_firestore('discord_webhooks', 'short_sale_alerts')
-        if not webhook_url:
-            return "Webhook URL not configured", 500
-        
-        discord_client = DiscordClient(webhook_url=webhook_url)
-        success = discord_client.send_alert(
-            title="🧪 Test Alert",
-            message="Alert system is working correctly!",
-            color=0x00FF00
-        )
-        
-        if success:
-            logging.info("Test alert sent successfully")
-            return "Test alert sent successfully!"
-        else:
-            return "Test alert failed!"
-            
-    except Exception as e:
-        logging.error(f"Test alert error: {e}")
-        return f"Test alert error: {e}"
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=True)
