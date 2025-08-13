@@ -140,6 +140,24 @@ def reset_monitor_state():
     
     return redirect(url_for('dashboard'))
 
+# Add these missing test routes back into main.py
+
+@app.route('/test-intelligence')
+def test_intelligence():
+    """A simple test route for the intelligence module."""
+    # This is a placeholder implementation. You can adapt it as needed.
+    return "Intelligence Test Page - Placeholder"
+
+@app.route('/test-batching')
+def test_batching():
+    """A simple test route for the batching system."""
+    return "Batching Test Page - Placeholder"
+
+@app.route('/time-travel')
+def time_travel():
+    """A simple test route for the time travel feature."""
+    return "Time Travel Test Page - Placeholder"
+
 # --- Application Startup ---
 if __name__ == '__main__':
     log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
