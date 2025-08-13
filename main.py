@@ -22,7 +22,7 @@ from services.alert_batcher import SmartAlertBatcher
 from alerts.alert_intelligence import quick_analyze
 
 # Add this with your other custom imports
-from testing.time_travel_tester import run_time_travel_test
+from testing.time_travel_tester import run_time_travel_test, get_test_suggestions
 
 # --- Global Application Setup ---
 app = Flask(__name__)
@@ -224,32 +224,52 @@ def test_batching():
 # Replace the placeholder time_travel route with this functional code
 
 # Replace the old time_travel route with this corrected version
-
 @app.route('/time-travel')
 def time_travel():
-    """Runs the time travel test for the current time and displays the results."""
-    try:
-        # Create a timezone-aware datetime object for the current time
-        cst = pytz.timezone('America/Chicago')
-        target_time = datetime.now(cst)
+    """
+    Runs a time travel test for a specific time provided in the URL,
+    or shows a list of suggested test times if none is provided.
+    """
+    target_time_str = request.args.get('time') # Check for a time in the URL
+    
+    # If a specific time is provided, run the test
+    if target_time_str:
+        try:
+            target_time = datetime.strptime(target_time_str, '%Y-%m-%d %H:%M:%S')
+            target_time = pytz.timezone('America/Chicago').localize(target_time)
+            
+            results = run_time_travel_test(target_time=target_time)
+            
+            return f"""
+            <html><body style="font-family: monospace; background: #121212; color: #e0e0e0; padding: 2rem;">
+            <h2>Time Travel Test Results</h2>
+            <p><strong>Test run for time:</strong> {target_time.strftime('%Y-%m-%d %H:%M:%S CST')}</p>
+            <pre style="background: #1e1e1e; padding: 1rem; border-radius: 8px; white-space: pre-wrap; word-wrap: break-word;">{json.dumps(results, indent=2)}</pre>
+            <a href="/time-travel">- Back to Suggestions</a>
+            </body></html>
+            """
+        except Exception as e:
+            logging.error(f"Time travel test failed: {e}", exc_info=True)
+            return f"Time travel test failed: {str(e)}", 500
+            
+    # If no time is provided, show a list of suggestions
+    else:
+        suggestions = get_test_suggestions(vip_symbols=config.vip_tickers)
         
-        # Call the test function with the required 'target_time' argument
-        results = run_time_travel_test(target_time=target_time)
-        
-        # Format the results for display in the browser
-        return f"""
+        html = """
         <html><body style="font-family: monospace; background: #121212; color: #e0e0e0; padding: 2rem;">
-        <h2>Time Travel Test Results</h2>
-        <p><strong>Test run for time:</strong> {target_time.strftime('%Y-%m-%d %H:%M:%S CST')}</p>
-        <pre style="background: #1e1e1e; padding: 1rem; border-radius: 8px; white-space: pre-wrap; word-wrap: break-word;">{json.dumps(results, indent=2)}</pre>
-        <a href="/">- Back to Dashboard</a>
+        <h2>Time Travel Test</h2>
+        <p>Select a historical time to simulate an alert check.</p>
+        <div style="background: #1e1e1e; padding: 1rem; border-radius: 8px;">
+        """
+        
+        for sug in suggestions:
+            vip_label = " (💎 VIP)" if sug.get('is_vip') else ""
+            html += f'<p><a href="/time-travel?time={sug["test_time"]}" style="color: #00d9ff;">{sug["test_time"]}</a> - {sug["description"]}{vip_label}</p>'
+        
+        html += """
+        </div>
+        <br/><a href="/">- Back to Dashboard</a>
         </body></html>
         """
-    except Exception as e:
-        logging.error(f"Time travel test failed: {e}", exc_info=True)
-        return f"Time travel test failed: {str(e)}", 500
-# --- Application Startup ---
-if __name__ == '__main__':
-    logging.info("--- Starting Secret_Alerts Locally---")
-    # The 'debug=True' is useful for local development
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=True)
+        return html
