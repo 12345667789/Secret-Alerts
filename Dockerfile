@@ -49,4 +49,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # --- Run Command ---
 # Specify the command to run on container startup.
 # Use gunicorn as the production server and point it to the 'app' object in your 'run.py' file
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "run:app"]
+# Tells Gunicorn to look in the 'main.py' file for the variable named 'app'
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "main:app"]
