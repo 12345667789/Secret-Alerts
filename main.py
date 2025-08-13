@@ -18,6 +18,9 @@ from config.settings import get_config, get_config_from_firestore
 from services.health_monitor import EnhancedHealthMonitor
 from services.alert_batcher import SmartAlertBatcher
 
+# Add this line with your other custom imports
+from alerts.alert_intelligence import quick_analyze
+
 # --- Global Application Setup ---
 app = Flask(__name__)
 config = get_config()
@@ -150,21 +153,79 @@ def reset_monitor_state():
     
     return redirect(url_for('dashboard'))
 
-# These are your placeholder test routes.
+# Replace the placeholder test routes with this functional code
+
 @app.route('/test-intelligence')
 def test_intelligence():
-    """A simple test route for the intelligence module."""
-    return "Intelligence Test Page - Placeholder"
+    """Test the intelligence system by analyzing the most recent circuit breaker."""
+    try:
+        monitor = ShortSaleMonitor()
+        full_df = monitor.fetch_data()
+
+        if full_df is None or full_df.empty:
+            return "No data available for intelligence testing", 400
+
+        # Analyze the most recent symbol
+        sample_symbol = full_df.iloc[0]['Symbol']
+        sample_date = full_df.iloc[0]['Trigger Date']
+        result = quick_analyze(sample_symbol, sample_date, full_df, config.vip_tickers)
+
+        # Return a simple formatted HTML page
+        return f"""
+        <html><body style="font-family: monospace; background: #121212; color: #e0e0e0; padding: 2rem;">
+        <h2>Intelligence Test Results for: {sample_symbol}</h2>
+        <pre style="background: #1e1e1e; padding: 1rem; border-radius: 8px;">{json.dumps(result, indent=2)}</pre>
+        <a href="/">- Back to Dashboard</a>
+        </body></html>
+        """
+    except Exception as e:
+        logging.error(f"Intelligence test failed: {e}", exc_info=True)
+        return f"Intelligence test failed: {str(e)}", 500
 
 @app.route('/test-batching')
 def test_batching():
-    """A simple test route for the batching system."""
-    return "Batching Test Page - Placeholder"
+    """Display the current smart batching mode and window."""
+    try:
+        # This logic determines the batching state based on the current time
+        cst = pytz.timezone('America/Chicago')
+        now_cst = datetime.now(cst)
+        current_time = now_cst.time()
+        from datetime import time as dt_time
+        
+        rush_start, rush_end = dt_time(9, 20), dt_time(10, 0)
+        market_start, market_end = dt_time(9, 30), dt_time(16, 0)
+        premarket_start = dt_time(8, 0)
+
+        if rush_start <= current_time <= rush_end:
+            mode, window = "🔥 RUSH HOUR", 90
+        elif market_start <= current_time <= market_end:
+            mode, window = "📈 MARKET HOURS", 45
+        elif premarket_start <= current_time < rush_start:
+            mode, window = "🌅 PRE-MARKET", 30
+        else:
+            mode, window = "🌙 AFTER HOURS", 15
+
+        return f"""
+        <html><body style="font-family: monospace; background: #121212; color: #e0e0e0; padding: 2rem;">
+        <h2>Smart Batching System Status</h2>
+        <p><strong>Current Time (CST):</strong> {now_cst.strftime('%Y-%m-%d %H:%M:%S')}</p>
+        <p><strong>Current Mode:</strong> {mode}</p>
+        <p><strong>Alert Batch Window:</strong> {window} seconds</p>
+        <a href="/">- Back to Dashboard</a>
+        </body></html>
+        """
+    except Exception as e:
+        logging.error(f"Batching test failed: {e}", exc_info=True)
+        return f"Test failed: {str(e)}", 500
 
 @app.route('/time-travel')
 def time_travel():
     """A simple test route for the time travel feature."""
-    return "Time Travel Test Page - Placeholder"
+    # This route's functionality depends on your 'testing.time_travel_tester' module.
+    # If that module is not fully implemented, this will serve as a placeholder.
+    # from testing.time_travel_tester import run_time_travel_test
+    # results = run_time_travel_test()
+    return "Time Travel Test Page - To be implemented"
 
 # --- Application Startup ---
 if __name__ == '__main__':
