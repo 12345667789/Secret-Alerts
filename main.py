@@ -224,52 +224,19 @@ def test_batching():
 # Replace the placeholder time_travel route with this functional code
 
 # Replace the old time_travel route with this corrected version
+# In main.py
 @app.route('/time-travel')
 def time_travel():
-    """
-    Runs a time travel test for a specific time provided in the URL,
-    or shows a list of suggested test times if none is provided.
-    """
-    target_time_str = request.args.get('time') # Check for a time in the URL
+    target_time_str = request.args.get('time')
     
-    # If a specific time is provided, run the test
     if target_time_str:
         try:
             target_time = datetime.strptime(target_time_str, '%Y-%m-%d %H:%M:%S')
             target_time = pytz.timezone('America/Chicago').localize(target_time)
-            
-            results = run_time_travel_test(target_time=target_time)
-            
-            return f"""
-            <html><body style="font-family: monospace; background: #121212; color: #e0e0e0; padding: 2rem;">
-            <h2>Time Travel Test Results</h2>
-            <p><strong>Test run for time:</strong> {target_time.strftime('%Y-%m-%d %H:%M:%S CST')}</p>
-            <pre style="background: #1e1e1e; padding: 1rem; border-radius: 8px; white-space: pre-wrap; word-wrap: break-word;">{json.dumps(results, indent=2)}</pre>
-            <a href="/time-travel">- Back to Suggestions</a>
-            </body></html>
-            """
+            results = run_time_travel_test(target_time=target_time, vip_symbols=config.vip_tickers)
+            # RENDER THE NEW HTML TEMPLATE
+            return render_template('time_travel_results.html', results=results)
         except Exception as e:
-            logging.error(f"Time travel test failed: {e}", exc_info=True)
-            return f"Time travel test failed: {str(e)}", 500
-            
-    # If no time is provided, show a list of suggestions
+            # ... (error handling remains the same)
     else:
-        suggestions = get_test_suggestions(vip_symbols=config.vip_tickers)
-        
-        html = """
-        <html><body style="font-family: monospace; background: #121212; color: #e0e0e0; padding: 2rem;">
-        <h2>Time Travel Test</h2>
-        <p>Select a historical time to simulate an alert check.</p>
-        <div style="background: #1e1e1e; padding: 1rem; border-radius: 8px;">
-        """
-        
-        for sug in suggestions:
-            vip_label = " (💎 VIP)" if sug.get('is_vip') else ""
-            html += f'<p><a href="/time-travel?time={sug["test_time"]}" style="color: #00d9ff;">{sug["test_time"]}</a> - {sug["description"]}{vip_label}</p>'
-        
-        html += """
-        </div>
-        <br/><a href="/">- Back to Dashboard</a>
-        </body></html>
-        """
-        return html
+        # ... (suggestion list logic remains the same)
