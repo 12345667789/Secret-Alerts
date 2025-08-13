@@ -19,11 +19,8 @@ RUN apt-get update && apt-get install -y curl \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Python Dependencies ---
-# *** THE FIX IS HERE ***
 # First, upgrade pip to the latest version.
 # Then, copy the requirements file and install the packages.
-# The newer version of pip is better at resolving binary conflicts like the one
-# you are seeing between pandas and numpy.
 RUN pip install --upgrade pip
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -42,12 +39,11 @@ EXPOSE 8080
 # --- Health Check ---
 # Add a health check to ensure the application is running correctly.
 # Cloud Run uses this to determine if the container is healthy.
-# Your new main.py (v4.1) has a specific '/health' endpoint for this.
+# This now points to the correct /api/health endpoint in your main.py.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:8080/api/health || exit 1
 
 # --- Run Command ---
 # Specify the command to run on container startup.
-# Use gunicorn as the production server and point it to the 'app' object in your 'run.py' file
-# Tells Gunicorn to look in the 'main.py' file for the variable named 'app'
+# This now correctly uses gunicorn to run the 'app' object from your 'main.py' file.
 CMD ["gunicorn", "--bind", "0.0.0.0:8080", "main:app"]
