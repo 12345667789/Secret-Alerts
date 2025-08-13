@@ -109,7 +109,7 @@ class SmartAlertBatcher:
             
             logging.info(f"🕐 Batching alert for {batch_window}s to detect double mints")
     
-    def _process_batch(self, batch_key):
+   def _process_batch(self, batch_key):
         """Process a batch of alerts after the wait period"""
         if batch_key not in self.pending_alerts:
             return
@@ -150,6 +150,48 @@ class SmartAlertBatcher:
                 logging.info(f"✅ Batched intelligent alert sent successfully ({batch_size} total alerts)")
             else:
                 logging.error("❌ Failed to send batched intelligent alert")
+
+    def queue_alert(self, new_breakers_df, ended_breakers_df, full_df):
+        """
+        Queue alert for intelligent batching instead of sending immediately
+        """
+        # Check if we should bypass batching for critical alerts
+        if self.should_bypass_batching(new_breakers_df):
+            logging.info("🚨 Critical alert detected - bypassing batching")
+            success = self.alert_manager.send_intelligent_alert(
+                new_breakers_df=new_breakers_df,
+                ended_breakers_df=ended_breakers_df,
+                full_df=full_df,
+                health_monitor=self.health_monitor
+            )
+            return success
+        
+        batch_window = self.get_batch_window()
+        current_time = datetime.now()
+        
+        # Create batch key based on time window
+        batch_key = int(current_time.timestamp() // batch_window) * batch_window
+        
+        # Add to pending alerts
+        self.pending_alerts[batch_key].append({
+            'new_breakers': new_breakers_df,
+            'ended_breakers': ended_breakers_df,
+            'full_df': full_df,
+            'timestamp': current_time
+        })
+        
+        # Set timer for this batch if not already set
+        if batch_key not in self.batch_timers:
+            # FIXED: Use time_module instead of time
+            timer = threading.Timer(
+                batch_window, 
+                self._process_batch, 
+                args=[batch_key]
+            )
+            timer.start()
+            self.batch_timers[batch_key] = timer
+            
+            logging.info(f"🕐 Batching alert for {batch_window}s to detect double mints")
 
 # --- Enhanced Health Monitor Class ---
 class EnhancedHealthMonitor:
