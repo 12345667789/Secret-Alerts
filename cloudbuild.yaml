@@ -2,12 +2,11 @@
 
 steps:
 # 1. Pull the latest image to use as a cache.
-# The '|| exit 0' ensures this step doesn't fail if the image doesn't exist yet.
 - name: 'gcr.io/cloud-builders/docker'
   entrypoint: 'bash'
   args: ['-c', 'docker pull gcr.io/$PROJECT_ID/secret-alerts-system:latest || exit 0']
 
-# 2. Build the container image, tagging it with BOTH the commit SHA and 'latest'.
+# 2. Build the container image, tagging it with both the commit SHA and 'latest'.
 - name: 'gcr.io/cloud-builders/docker'
   args:
     - 'build'
@@ -19,7 +18,7 @@ steps:
     - 'gcr.io/$PROJECT_ID/secret-alerts-system:latest'
     - '.'
 
-# 3. Deploy to Cloud Run. The manual 'docker push' step is removed from here.
+# 3. Deploy to Cloud Run, now with the memory setting included.
 - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
   entrypoint: gcloud
   args:
@@ -30,9 +29,9 @@ steps:
     - '--region=us-central1'
     - '--platform=managed'
     - '--allow-unauthenticated'
+    - '--memory=1Gi'  # Recommended: Set the memory for the service.
 
-# This 'images' section tells Cloud Build to automatically push the images
-# after they are successfully built. THIS IS THE KEY TO THE FIX.
+# This tells Cloud Build to automatically push the built images.
 images:
 - 'gcr.io/$PROJECT_ID/secret-alerts-system:$COMMIT_SHA'
 - 'gcr.io/$PROJECT_ID/secret-alerts-system:latest'
