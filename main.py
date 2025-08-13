@@ -21,6 +21,9 @@ from services.alert_batcher import SmartAlertBatcher
 # Add this line with your other custom imports
 from alerts.alert_intelligence import quick_analyze
 
+# Add this with your other custom imports
+from testing.time_travel_tester import run_time_travel_test
+
 # --- Global Application Setup ---
 app = Flask(__name__)
 config = get_config()
@@ -218,14 +221,26 @@ def test_batching():
         logging.error(f"Batching test failed: {e}", exc_info=True)
         return f"Test failed: {str(e)}", 500
 
+# Replace the placeholder time_travel route with this functional code
+
 @app.route('/time-travel')
 def time_travel():
-    """A simple test route for the time travel feature."""
-    # This route's functionality depends on your 'testing.time_travel_tester' module.
-    # If that module is not fully implemented, this will serve as a placeholder.
-    # from testing.time_travel_tester import run_time_travel_test
-    # results = run_time_travel_test()
-    return "Time Travel Test Page - To be implemented"
+    """Runs the time travel test and displays the results."""
+    try:
+        # This function is called from your testing module
+        results = run_time_travel_test()
+        
+        # Format the results for display in the browser
+        return f"""
+        <html><body style="font-family: monospace; background: #121212; color: #e0e0e0; padding: 2rem;">
+        <h2>Time Travel Test Results</h2>
+        <pre style="background: #1e1e1e; padding: 1rem; border-radius: 8px; white-space: pre-wrap; word-wrap: break-word;">{json.dumps(results, indent=2)}</pre>
+        <a href="/">- Back to Dashboard</a>
+        </body></html>
+        """
+    except Exception as e:
+        logging.error(f"Time travel test failed: {e}", exc_info=True)
+        return f"Time travel test failed: {str(e)}", 500
 
 # --- Application Startup ---
 if __name__ == '__main__':
