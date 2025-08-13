@@ -32,41 +32,70 @@ class SmartAlertBatcher:
         self.cst = pytz.timezone('America/Chicago')
         
     def get_batch_window(self) -> int:
-        """Get appropriate batch window based on market conditions"""
-        now_cst = datetime.now(self.cst).time()
-        
-        # Rush hour: 9:20-10:00 AM (peak circuit breaker activity)
-        rush_start = datetime.time(9, 20)
-        rush_end = datetime.time(10, 0)
-        
-        # Market hours: 9:30 AM - 4:00 PM
-        market_start = datetime.time(9, 30)
-        market_end = datetime.time(16, 0)
-        
-        if rush_start <= now_cst <= rush_end:
-            return 90  # 90 seconds during rush hour
-        elif market_start <= now_cst <= market_end:
-            return 45  # 45 seconds during normal market hours
-        else:
-            return 15  # 15 seconds after hours
+    """Get appropriate batch window based on market conditions"""
     
-    def should_bypass_batching(self, new_breakers_df) -> bool:
-        """Check if alert should bypass batching (emergency situations)"""
-        if new_breakers_df.empty:
-            return False
-        
-        # Bypass for VIP symbols during after-hours (when double mints are rare)
-        now_cst = datetime.now(self.cst).time()
-        after_hours = now_cst < datetime.time(9, 20) or now_cst > datetime.time(16, 0)
-        
-        if after_hours:
-            vip_symbols = ['TSLA', 'NVDA', 'AAPL', 'MSTR', 'GME', 'AMC']
-            has_vip = any(symbol in vip_symbols for symbol in new_breakers_df['Symbol'])
-            if has_vip:
-                logging.info("🚨 VIP symbol detected after hours - bypassing batch")
-                return True
-        
+    # FIXED: Properly get CST time
+    cst = pytz.timezone('America/Chicago')
+    now_cst = datetime.now(cst)
+    current_time = now_cst.time()
+    
+    # Import time class explicitly to avoid conflicts
+    from datetime import time as dt_time
+    
+    # Rush hour: 9:20-10:00 AM (peak circuit breaker activity)
+    rush_start = dt_time(9, 20)
+    rush_end = dt_time(10, 0)
+    
+    # Market hours: 9:30 AM - 4:00 PM
+    market_start = dt_time(9, 30)
+    market_end = dt_time(16, 0)
+    
+    # Pre-market starts at 8:00 AM
+    premarket_start = dt_time(8, 0)
+    
+    # Debug logging to see what's happening
+    logging.info(f"Current CST time: {now_cst.strftime('%H:%M:%S')}")
+    logging.info(f"Time check - Rush: {rush_start} <= {current_time} <= {rush_end}")
+    
+    if rush_start <= current_time <= rush_end:
+        logging.info("🔥 RUSH HOUR MODE activated")
+        return 90  # 90 seconds during rush hour
+    elif market_start <= current_time <= market_end:
+        logging.info("📈 MARKET HOURS MODE activated") 
+        return 45  # 45 seconds during normal market hours
+    elif premarket_start <= current_time < rush_start:
+        logging.info("🌅 PRE-MARKET MODE activated")
+        return 30  # 30 seconds during pre-market
+    else:
+        logging.info("🌙 AFTER HOURS MODE activated")
+        return 15  # 15 seconds after hours
+    
+def should_bypass_batching(self, new_breakers_df) -> bool:
+    """Check if alert should bypass batching (emergency situations)"""
+    if new_breakers_df.empty:
         return False
+    
+    # FIXED: Properly get CST time
+    cst = pytz.timezone('America/Chicago')
+    now_cst = datetime.now(cst)
+    current_time = now_cst.time()
+    
+    # Import time class explicitly
+    from datetime import time as dt_time
+    
+    # Define after hours correctly
+    after_hours_start = dt_time(20, 0)  # 8:00 PM
+    after_hours_end = dt_time(8, 0)     # 8:00 AM
+    
+    # Check if truly after hours (8 PM to 8 AM)
+    if current_time >= after_hours_start or current_time < after_hours_end:
+        vip_symbols = ['TSLA', 'NVDA', 'AAPL', 'MSTR', 'GME', 'AMC']
+        has_vip = any(symbol in vip_symbols for symbol in new_breakers_df['Symbol'])
+        if has_vip:
+            logging.info("🚨 VIP symbol detected after hours - bypassing batch")
+            return True
+    
+    return False
     
     def queue_alert(self, new_breakers_df, ended_breakers_df, full_df):
         """
@@ -624,19 +653,24 @@ def test_intelligence():
 
 @app.route('/test-batching')
 def test_batching():
-    """Test the smart batching system"""
+    """Test the smart batching system with correct timezone"""
     try:
-        # Simple test without creating SmartAlertBatcher to avoid conflicts
+        # FIXED: Proper CST timezone handling
         cst = pytz.timezone('America/Chicago')
         now_cst = datetime.now(cst)
         current_time = now_cst.time()
         
-        # Get current market mode
-        rush_start = datetime.time(9, 20)
-        rush_end = datetime.time(10, 0)
-        market_start = datetime.time(9, 30)
-        market_end = datetime.time(16, 0)
+        # Import time class explicitly
+        from datetime import time as dt_time
         
+        rush_start = dt_time(9, 20)
+        rush_end = dt_time(10, 0)
+        market_start = dt_time(9, 30)
+        market_end = dt_time(16, 0)
+        premarket_start = dt_time(8, 0)
+        after_hours_start = dt_time(20, 0)  # 8 PM
+        
+        # Determine correct mode
         if rush_start <= current_time <= rush_end:
             mode = "RUSH HOUR"
             batch_window = 90
@@ -645,6 +679,10 @@ def test_batching():
             mode = "MARKET HOURS"
             batch_window = 45
             description = "Normal trading hours - balanced batching"
+        elif premarket_start <= current_time < rush_start:
+            mode = "PRE-MARKET"
+            batch_window = 30
+            description = "Pre-market preparation - moderate batching"
         else:
             mode = "AFTER HOURS"
             batch_window = 15
@@ -652,35 +690,37 @@ def test_batching():
         
         return f"""
         <html><body style="font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; background: #f5f5f5;">
-        <h2>🃏 Smart Batching System Test</h2>
+        <h2>🃏 Smart Batching System Test (TIMEZONE FIXED)</h2>
         <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px;">
             <h3>✅ Configuration Test Successful</h3>
             <div style="background: #d4edda; padding: 15px; border-radius: 4px; border: 1px solid #c3e6cb;">
                 <p><strong>Current Time (CST):</strong> {now_cst.strftime('%Y-%m-%d %H:%M:%S')}</p>
+                <p><strong>Raw Time:</strong> {current_time.strftime('%H:%M:%S')}</p>
                 <p><strong>Market Mode:</strong> {mode}</p>
                 <p><strong>Batch Window:</strong> {batch_window} seconds</p>
                 <p><strong>Description:</strong> {description}</p>
-                <p><strong>Status:</strong> Batching logic working correctly!</p>
+                <p><strong>Status:</strong> Timezone corrected! ✅</p>
             </div>
         </div>
         
         <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px;">
-            <h3>Batching Schedule</h3>
+            <h3>Corrected Schedule (CST)</h3>
             <div style="background: #e8f5e8; padding: 15px; border-radius: 4px;">
-                <p><strong>🔥 Rush Hour (9:20-10:00 AM):</strong> 90 seconds - Maximum double mint detection</p>
-                <p><strong>📈 Market Hours (9:30 AM-4:00 PM):</strong> 45 seconds - Balanced efficiency</p>
-                <p><strong>🌙 After Hours:</strong> 15 seconds - Immediate VIP alerts</p>
+                <p><strong>🌙 After Hours (8:00 PM - 8:00 AM):</strong> 15 seconds</p>
+                <p><strong>🌅 Pre-Market (8:00 AM - 9:20 AM):</strong> 30 seconds</p>
+                <p><strong>🔥 Rush Hour (9:20 AM - 10:00 AM):</strong> 90 seconds</p>
+                <p><strong>📈 Market Hours (9:30 AM - 4:00 PM):</strong> 45 seconds</p>
             </div>
         </div>
         
         <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-            <h3>System Status</h3>
-            <div style="background: #d4edda; padding: 15px; border-radius: 4px; border: 1px solid #c3e6cb;">
-                <p>✅ Smart batching system configuration is correct</p>
-                <p>🃏 Double mint detection logic working</p>
-                <p>🚨 VIP bypass logic ready</p>
-                <p>⏰ Dynamic window adjustment operational</p>
-                <p>🛠️ Time module conflict resolved</p>
+            <h3>Debug Info</h3>
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 4px; font-family: monospace;">
+                <p>Rush Start: {rush_start}</p>
+                <p>Current Time: {current_time}</p>
+                <p>Rush End: {rush_end}</p>
+                <p>In Rush Hour: {rush_start <= current_time <= rush_end}</p>
+                <p>In Pre-Market: {premarket_start <= current_time < rush_start}</p>
             </div>
         </div>
         
