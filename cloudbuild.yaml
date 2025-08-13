@@ -1,13 +1,11 @@
 # cloudbuild.yaml
 steps:
-# 1. Pull the latest version of the image to use as a cache.
-# The '|| exit 0' ensures this step doesn't fail if the image doesn't exist yet.
+# 1. Pull the latest image to use as a cache.
 - name: 'gcr.io/cloud-builders/docker'
   entrypoint: 'bash'
   args: ['-c', 'docker pull gcr.io/$PROJECT_ID/secret-alerts-system:latest || exit 0']
 
-# 2. Build the new image, using the old one as a cache.
-# We also tag this new build as 'latest' so the *next* build can use it.
+# 2. Build the container image, tagging it with the commit SHA and 'latest'.
 - name: 'gcr.io/cloud-builders/docker'
   args:
     - 'build'
@@ -19,11 +17,7 @@ steps:
     - 'gcr.io/$PROJECT_ID/secret-alerts-system:latest'
     - '.'
 
-# 3. Push both tags for the new image.
-- name: 'gcr.io/cloud-builders/docker'
-  args: ['push', 'gcr.io/$PROJECT_ID/secret-alerts-system']
-
-# 4. Deploy the new image to Cloud Run using its unique commit SHA.
+# 3. Deploy to Cloud Run. The manual 'docker push' step is no longer needed.
 - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
   entrypoint: gcloud
   args:
@@ -35,6 +29,11 @@ steps:
     - '--platform=managed'
     - '--allow-unauthenticated'
 
-# Keep the logging option
+# Add this 'images' section. Cloud Build will automatically push these images
+# after they are successfully built in the steps above.
+images:
+- 'gcr.io/$PROJECT_ID/secret-alerts-system:$COMMIT_SHA'
+- 'gcr.io/$PROJECT_ID/secret-alerts-system:latest'
+
 options:
   logging: CLOUD_LOGGING_ONLY
