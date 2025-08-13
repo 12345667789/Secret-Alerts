@@ -21,14 +21,15 @@ class TimeTravelTester:
         self.template_manager = AlertTemplateManager(vip_symbols=self.vip_symbols)
         self.cst = pytz.timezone('America/Chicago')
         
-    def simulate_historical_check(self, target_time_str: str) -> Dict[str, Any]:
+    def simulate_historical_check(self, target_time: datetime) -> Dict[str, Any]:
         """
-        Simulate what alerts would have been generated at a specific time
+        Simulate what alerts would have been generated at a specific time.
+        This function now accepts a datetime object directly.
         """
-        logging.info(f"🕒 Starting time travel simulation for {target_time_str}")
+        logging.info(f"🕒 Starting time travel simulation for {target_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
         try:
-            target_time = self.cst.localize(datetime.strptime(target_time_str, "%Y-%m-%d %H:%M:%S"))
+            # The line causing the error has been removed, as we now pass a datetime object directly.
             
             monitor = ShortSaleMonitor()
             current_data = monitor.fetch_data()
@@ -42,7 +43,7 @@ class TimeTravelTester:
             
             result = self._format_simulation_results_with_intelligence(target_time, before_state, after_state, new_alerts, ended_alerts)
             
-            logging.info(f"✅ Time travel simulation completed for {target_time_str}")
+            logging.info(f"✅ Time travel simulation completed for {target_time.strftime('%Y-%m-%d %H:%M:%S')}")
             return result
             
         except Exception as e:
@@ -56,29 +57,22 @@ class TimeTravelTester:
         """
         df = current_data.copy()
         
-        # --- FIX: Convert to datetime and make it timezone-aware to match target_time ---
         df['trigger_datetime'] = pd.to_datetime(df['Trigger Date'] + ' ' + df['Trigger Time'], errors='coerce')
-        df = df.dropna(subset=['trigger_datetime']) # Drop rows where conversion failed
+        df = df.dropna(subset=['trigger_datetime'])
         df['trigger_datetime'] = df['trigger_datetime'].dt.tz_localize(self.cst)
 
-        # Create "before" state: all alerts that triggered before the target time
         before_state = df[df['trigger_datetime'] < target_time].copy()
         
-        # For the "before" state, nullify any end times that happened at or after the target time
         if 'End Time' in before_state.columns:
-            # Combine End Date and End Time, coercing errors
             end_datetime_str = before_state['End Date'].astype(str) + ' ' + before_state['End Time'].astype(str)
             end_datetimes = pd.to_datetime(end_datetime_str, errors='coerce').dt.tz_localize(self.cst)
             
-            # Find rows where the end time is at or after our target simulation time
             mask_to_reopen = end_datetimes >= target_time
             before_state.loc[mask_to_reopen, 'End Time'] = None
             before_state.loc[mask_to_reopen, 'End Date'] = None
 
-        # Create "after" state: includes everything from "before" plus events at the target time
         after_state = df[df['trigger_datetime'] <= target_time].copy()
         
-        # Add unique keys for comparison
         before_state['UniqueKey'] = before_state['Symbol'].astype(str) + "_" + before_state['Trigger Date'].astype(str) + "_" + before_state['Trigger Time'].astype(str)
         after_state['UniqueKey'] = after_state['Symbol'].astype(str) + "_" + after_state['Trigger Date'].astype(str) + "_" + after_state['Trigger Time'].astype(str)
         
@@ -89,17 +83,13 @@ class TimeTravelTester:
         """
         Detect new and ended alerts between states
         """
-        # Find new alerts - use anti-join to get records in after_state but not in before_state
         if before_state.empty:
             new_alerts = after_state.copy()
         else:
-            # Use indicator=True and then filter, but keep only the original columns from after_state
             merged = after_state.merge(before_state[['UniqueKey']], on='UniqueKey', how='left', indicator=True)
             new_alert_mask = merged['_merge'] == 'left_only'
-            # Select only the original after_state columns (exclude the _merge column)
             new_alerts = after_state[new_alert_mask].copy()
 
-        # Find ended alerts - alerts that were open before but are now closed
         if before_state.empty:
             ended_alerts = pd.DataFrame()
         else:
@@ -108,9 +98,7 @@ class TimeTravelTester:
             
             ended_alerts = pd.DataFrame()
             if not previously_open.empty and not currently_closed.empty:
-                # Get the UniqueKeys that were previously open but are now closed
                 ended_keys = previously_open.merge(currently_closed[['UniqueKey']], on='UniqueKey', how='inner')['UniqueKey']
-                # Get the full records from the before_state
                 ended_alerts = previously_open[previously_open['UniqueKey'].isin(ended_keys)].copy()
 
         return new_alerts, ended_alerts
@@ -133,31 +121,25 @@ class TimeTravelTester:
         }
         
         if not new_alerts.empty:
-            # Add intelligence analysis to time travel results
             try:
                 from alerts.enhanced_alert_manager import EnhancedAlertManager
                 
-                # Create a dummy discord client for the enhanced manager
                 class DummyDiscordClient:
                     def send_alert(self, **kwargs):
                         return True
                 
                 dummy_discord = DummyDiscordClient()
                 
-                # Create enhanced alert manager
                 enhanced_manager = EnhancedAlertManager(
                     discord_client=dummy_discord,
                     template_manager=self.template_manager,
                     vip_symbols=self.vip_symbols
                 )
                 
-                # Clean the after_state for intelligence analysis
                 clean_df = self._clean_dataframe_for_intelligence(after_state)
                 
-                # Analyze with intelligence
                 intelligence_results = enhanced_manager.intelligence_engine.analyze_batch(new_alerts, clean_df)
                 
-                # Create enhanced Discord preview using intelligence
                 enhanced_alert_data = self._create_intelligent_alert_preview(
                     new_alerts, ended_alerts, intelligence_results, enhanced_manager
                 )
@@ -188,13 +170,11 @@ class TimeTravelTester:
                 
             except Exception as e:
                 logging.warning(f"Could not generate intelligence preview for time travel: {e}")
-                # Fallback to basic formatting
                 formatter = self.template_manager.get_formatter('short_sale')
                 alert_data = formatter.format_changes_alert(new_alerts, ended_alerts)
                 result["discord_preview"] = alert_data
                 result["intelligence_preview"] = {"error": str(e)}
             
-            # Add basic alert details
             for _, row in new_alerts.iterrows():
                 result["detected_changes"]["new_alert_details"].append({
                     "symbol": row['Symbol'], 
@@ -204,7 +184,6 @@ class TimeTravelTester:
                 })
         
         else:
-            # No new alerts, use basic formatting for ended alerts only
             if not ended_alerts.empty:
                 formatter = self.template_manager.get_formatter('short_sale')
                 alert_data = formatter.format_changes_alert(new_alerts, ended_alerts)
@@ -216,19 +195,16 @@ class TimeTravelTester:
         """Clean DataFrame to ensure it works with intelligence analysis"""
         clean_df = df.copy()
         
-        # Remove temporary columns that might interfere with intelligence
         temp_columns = ['UniqueKey', 'trigger_datetime', '_merge']
         for col in temp_columns:
             if col in clean_df.columns:
                 clean_df = clean_df.drop(columns=[col])
         
-        # Ensure required columns exist
         required_columns = ['Symbol', 'Trigger Date', 'Trigger Time', 'Security Name']
         missing_columns = [col for col in required_columns if col not in clean_df.columns]
         
         if missing_columns:
             logging.warning(f"Missing columns for intelligence analysis: {missing_columns}")
-            # Add empty columns for missing ones
             for col in missing_columns:
                 clean_df[col] = ''
         
@@ -242,26 +218,19 @@ class TimeTravelTester:
         Create alert preview with intelligence enhancements for time travel testing
         """
         try:
-            # Generate the basic alert using existing template system
             formatter = self.template_manager.get_formatter('short_sale')
             alert_data = formatter.format_changes_alert(new_breakers_df, ended_breakers_df)
             
-            # Enhance the alert with intelligence data
             if intelligent_results:
                 enhanced_message = enhanced_manager._enhance_alert_message(alert_data['message'], intelligent_results)
                 alert_data['message'] = enhanced_message
-                
-                # Adjust color based on priority
                 alert_data['color'] = enhanced_manager._determine_alert_color(intelligent_results)
-                
-                # Enhance title with priority indicators
                 alert_data['title'] = enhanced_manager._enhance_alert_title(alert_data['title'], intelligent_results)
             
             return alert_data
             
         except Exception as e:
             logging.error(f"Error creating intelligent alert preview: {e}")
-            # Fallback to basic alert
             formatter = self.template_manager.get_formatter('short_sale')
             return formatter.format_changes_alert(new_breakers_df, ended_breakers_df)
     
@@ -286,7 +255,6 @@ class TimeTravelTester:
             if current_data is None or current_data.empty: 
                 return []
             
-            # Sort by date and prioritize VIP symbols
             current_data['is_vip'] = current_data['Symbol'].isin(self.vip_symbols)
             recent_triggers = current_data.sort_values(['is_vip', 'Trigger Date'], ascending=[False, False]).head(20)
             
@@ -297,12 +265,10 @@ class TimeTravelTester:
                 try:
                     symbol = row['Symbol']
                     
-                    # Avoid duplicate symbols in suggestions
                     if symbol in seen_symbols:
                         continue
                     seen_symbols.add(symbol)
                     
-                    vip_indicator = "⭐ VIP" if symbol in self.vip_symbols else ""
                     description = f"Test detection of {symbol} alert"
                     if symbol in self.vip_symbols:
                         description += " (VIP Symbol)"
@@ -314,7 +280,6 @@ class TimeTravelTester:
                         "is_vip": symbol in self.vip_symbols
                     })
                     
-                    # Limit to 8 suggestions
                     if len(suggestions) >= 8:
                         break
                         
@@ -339,7 +304,6 @@ class TimeTravelTester:
             if current_data is None or current_data.empty:
                 return {"error": "No data available"}
             
-            # Quick intelligence analysis
             vip_count = len(current_data[current_data['Symbol'].isin(self.vip_symbols)])
             total_symbols = len(current_data['Symbol'].unique())
             symbol_frequencies = current_data['Symbol'].value_counts()
@@ -358,8 +322,8 @@ class TimeTravelTester:
             logging.error(f"Error getting intelligence summary: {e}")
             return {"error": str(e)}
 
-
-def run_time_travel_test(target_time: str, vip_symbols=None) -> Dict[str, Any]:
+# This function's signature has been updated to accept a datetime object
+def run_time_travel_test(target_time: datetime, vip_symbols=None) -> Dict[str, Any]:
     """
     Convenience function to run a time travel test with intelligence
     """
