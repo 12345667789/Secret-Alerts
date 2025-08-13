@@ -14,26 +14,38 @@ from alerts.discord_client import DiscordClient
 from alerts.templates import AlertTemplateManager
 from alerts.enhanced_alert_manager import EnhancedAlertManager
 from monitors.cboe_monitor import ShortSaleMonitor
-# CORRECTED IMPORT: Import the get_config function, not the variables directly.
 from config.settings import get_config, get_config_from_firestore
 from services.health_monitor import EnhancedHealthMonitor
 from services.alert_batcher import SmartAlertBatcher
 
 # --- Global Application Setup ---
 app = Flask(__name__)
-
-# CORRECTED CONFIGURATION: Create the config object to access all settings.
 config = get_config()
 
-# Setup for the legacy log viewer on the dashboard
+# Logging setup moved here to ensure it runs under Gunicorn
+log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+if root_logger.hasHandlers():
+    root_logger.handlers.clear()
+
+# This handler captures logs for the dashboard viewer
 recent_logs = deque(maxlen=20)
 class CaptureLogsHandler(logging.Handler):
     def emit(self, record):
         recent_logs.append(self.format(record))
 
-# Initialize global objects using the config object
+capture_handler = CaptureLogsHandler()
+capture_handler.setFormatter(log_formatter)
+root_logger.addHandler(capture_handler)
+
+# This handler prints logs to the standard console (visible in Cloud Logging)
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(log_formatter)
+root_logger.addHandler(console_handler)
+
+# Initialize global objects
 health_monitor = EnhancedHealthMonitor()
-# CORRECTED USAGE: Use config.vip_tickers instead of VIP_SYMBOLS
 template_manager = AlertTemplateManager(vip_symbols=config.vip_tickers)
 
 # --- Flask Routes ---
@@ -68,7 +80,6 @@ def run_check_endpoint():
             raise ValueError("Webhook URL not found in Firestore")
 
         discord_client = DiscordClient(webhook_url=webhook_url)
-        # CORRECTED USAGE: Pass config.vip_tickers to the alert manager
         alert_manager = EnhancedAlertManager(discord_client, template_manager, config.vip_tickers)
 
         log_msg = f"Analysis complete. Found {len(new_breakers_df)} new, {len(ended_breakers_df)} ended."
@@ -102,7 +113,6 @@ def report_open_alerts():
     try:
         webhook_url = get_config_from_firestore('discord_webhooks', 'short_sale_alerts')
         discord_client = DiscordClient(webhook_url=webhook_url)
-        # CORRECTED USAGE: Pass config.vip_tickers to the alert manager
         alert_manager = EnhancedAlertManager(discord_client, template_manager, config.vip_tickers)
         monitor = ShortSaleMonitor()
         current_df = monitor.fetch_data()
@@ -140,12 +150,10 @@ def reset_monitor_state():
     
     return redirect(url_for('dashboard'))
 
-# Add these missing test routes back into main.py
-
+# These are your placeholder test routes.
 @app.route('/test-intelligence')
 def test_intelligence():
     """A simple test route for the intelligence module."""
-    # This is a placeholder implementation. You can adapt it as needed.
     return "Intelligence Test Page - Placeholder"
 
 @app.route('/test-batching')
@@ -160,17 +168,6 @@ def time_travel():
 
 # --- Application Startup ---
 if __name__ == '__main__':
-    log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
-    if root_logger.hasHandlers():
-        root_logger.handlers.clear()
-    capture_handler = CaptureLogsHandler()
-    capture_handler.setFormatter(log_formatter)
-    root_logger.addHandler(capture_handler)
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(log_formatter)
-    root_logger.addHandler(console_handler)
-
-    logging.info("--- Starting Secret_Alerts ---")
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=False)
+    logging.info("--- Starting Secret_Alerts Locally---")
+    # The 'debug=True' is useful for local development
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=True)
