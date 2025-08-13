@@ -3,6 +3,8 @@
 import os
 from dataclasses import dataclass, field
 from typing import List, Tuple
+import logging
+from google.cloud import firestore
 
 # --- These classes MUST be defined BEFORE the main Config class ---
 @dataclass
@@ -33,7 +35,9 @@ class Config:
     # Updated to the correct URL for CBOE short sale circuit breaker data.
     cboe_url: str = "https://www.cboe.com/us/equities/market_statistics/short_sale_circuit_breakers/downloads/BatsCircuitBreakers2025.csv"
     
-    vip_tickers: List[str] = field(default_factory=lambda: ["TSLA", "HOOD", "RBLX", "UVXY", "TEM", "GOOGL"])
+    # --- CHANGE 1: Updated this list to match your main.py ---
+    vip_tickers: List[str] = field(default_factory=lambda: ["TSLA", "AAPL", "GOOG", "TSLZ", "ETQ", "NVDA", "MSTR", "GME", "AMC"])
+    
     keywords: List[str] = field(default_factory=lambda: ["BLOCK", "TRADE", "SWEEP", "UNUSUAL"])
     
     # Adding the missing interval attributes back into the config.
@@ -48,3 +52,21 @@ def get_config() -> Config:
     Initializes and returns the main application configuration.
     """
     return Config()
+
+# --- CHANGE 2: Added the Firestore function from main.py ---
+def get_config_from_firestore(doc_id, field_id):
+    """Gets a specific configuration value from a Firestore document."""
+    try:
+        db = firestore.Client()
+        doc_ref = db.collection('app_config').document(doc_id)
+        doc = doc_ref.get()
+        if doc.exists:
+            value = doc.to_dict().get(field_id)
+            if value: 
+                logging.info(f"Retrieved {field_id} from Firestore successfully")
+                return value
+        logging.error(f"Field '{field_id}' not found in Firestore document 'app_config/{doc_id}'")
+        return None
+    except Exception as e:
+        logging.error(f"Failed to access config from Firestore: {e}")
+        return None

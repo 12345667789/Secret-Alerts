@@ -61,10 +61,24 @@ class ShortSaleAlertFormatter(AlertFormatter):
             vip_marker = "⭐ " if row['is_vip'] else ""
             date_info = "Today" if row[date_col] == today_str else row[date_col]
             
-            if pd.notnull(row['underlying']):
-                line = f"• {vip_marker}**{row['underlying']}** (*{row['Symbol']}*) - {row['Security Name']} ({status_text} {date_info} at {row[time_col]})"
+            # FIX: Handle None/NaN time values properly
+            time_value = row[time_col]
+            if pd.isna(time_value) or time_value is None or str(time_value).lower() in ['none', 'nan', '']:
+                time_display = "Unknown"
             else:
-                line = f"• {vip_marker}**{row['Symbol']}** (*{row['Security Name']}*) ({status_text} {date_info} at {row[time_col]})"
+                time_display = str(time_value)
+            
+            # FIX: Handle None/NaN date values properly  
+            date_value = row[date_col]
+            if pd.isna(date_value) or date_value is None or str(date_value).lower() in ['none', 'nan', '']:
+                date_display = "Unknown"
+            else:
+                date_display = "Today" if date_value == today_str else str(date_value)
+            
+            if pd.notnull(row['underlying']):
+                line = f"• {vip_marker}**{row['underlying']}** (*{row['Symbol']}*) - {row['Security Name']} ({status_text} {date_display} at {time_display})"
+            else:
+                line = f"• {vip_marker}**{row['Symbol']}** (*{row['Security Name']}*) ({status_text} {date_display} at {time_display})"
             
             alert_lines.append(line)
         

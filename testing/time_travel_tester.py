@@ -1,19 +1,19 @@
 """
 Time Travel Testing Module for Secret_Alerts
-Simulates historical state changes to test alert detection logic
+Simulates historical state changes to test alert detection logic with intelligence analysis
 """
 
 import pandas as pd
 import logging
 from datetime import datetime, timedelta
 import pytz
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, List
 from monitors.cboe_monitor import ShortSaleMonitor
 from alerts.templates import AlertTemplateManager
 
 class TimeTravelTester:
     """
-    Test alert detection by simulating historical data states
+    Test alert detection by simulating historical data states with intelligence analysis
     """
     
     def __init__(self, vip_symbols=None):
@@ -24,45 +24,29 @@ class TimeTravelTester:
     def simulate_historical_check(self, target_time_str: str) -> Dict[str, Any]:
         """
         Simulate what alerts would have been generated at a specific time
-        
-        Args:
-            target_time_str: Time to simulate in format "2025-08-12 09:35:00"
-        
-        Returns:
-            Dictionary with simulation results
         """
-        logging.info(f"🕐 Starting time travel simulation for {target_time_str}")
+        logging.info(f"🕒 Starting time travel simulation for {target_time_str}")
         
         try:
-            # Parse target time
-            target_time = datetime.strptime(target_time_str, "%Y-%m-%d %H:%M:%S")
-            target_time = self.cst.localize(target_time)
+            target_time = self.cst.localize(datetime.strptime(target_time_str, "%Y-%m-%d %H:%M:%S"))
             
-            # Get current CBOE data
             monitor = ShortSaleMonitor()
             current_data = monitor.fetch_data()
             
             if current_data is None or current_data.empty:
                 return {"error": "Could not fetch current CBOE data"}
             
-            # Create simulated "before" and "after" states
-            before_state, after_state = self._create_simulation_states(
-                current_data, target_time
-            )
+            before_state, after_state = self._create_simulation_states(current_data, target_time)
             
-            # Simulate the alert detection
             new_alerts, ended_alerts = self._detect_changes(before_state, after_state)
             
-            # Format the results
-            result = self._format_simulation_results(
-                target_time, before_state, after_state, new_alerts, ended_alerts
-            )
+            result = self._format_simulation_results_with_intelligence(target_time, before_state, after_state, new_alerts, ended_alerts)
             
             logging.info(f"✅ Time travel simulation completed for {target_time_str}")
             return result
             
         except Exception as e:
-            logging.error(f"❌ Time travel simulation failed: {e}")
+            logging.error(f"⌛ Time travel simulation failed: {e}", exc_info=True)
             return {"error": str(e)}
     
     def _create_simulation_states(self, current_data: pd.DataFrame, 
@@ -70,69 +54,33 @@ class TimeTravelTester:
         """
         Create before/after states based on target time
         """
-        # Convert string dates to datetime for comparison - FIX: Handle data types properly
-        current_data = current_data.copy()
+        df = current_data.copy()
         
-        # Convert Trigger Date and Time to datetime, handling different data types
-        try:
-            # Combine date and time columns into datetime
-            current_data['trigger_datetime'] = pd.to_datetime(
-                current_data['Trigger Date'].astype(str) + ' ' + 
-                current_data['Trigger Time'].astype(str)
-            )
-        except Exception as e:
-            logging.error(f"Error converting datetime: {e}")
-            # Fallback: try different approach
-            current_data['trigger_datetime'] = pd.to_datetime(
-                current_data['Trigger Date'].astype(str) + ' ' + 
-                current_data['Trigger Time'].astype(str),
-                errors='coerce'
-            )
+        # --- FIX: Convert to datetime and make it timezone-aware to match target_time ---
+        df['trigger_datetime'] = pd.to_datetime(df['Trigger Date'] + ' ' + df['Trigger Time'], errors='coerce')
+        df = df.dropna(subset=['trigger_datetime']) # Drop rows where conversion failed
+        df['trigger_datetime'] = df['trigger_datetime'].dt.tz_localize(self.cst)
+
+        # Create "before" state: all alerts that triggered before the target time
+        before_state = df[df['trigger_datetime'] < target_time].copy()
         
-        # Remove any rows where datetime conversion failed
-        current_data = current_data.dropna(subset=['trigger_datetime'])
-        
-        # Create "before" state - all alerts that existed before target time
-        before_mask = current_data['trigger_datetime'] < target_time
-        before_state = current_data[before_mask].copy()
-        
-        # For "before" state, remove end times for alerts that ended after target time
-        if 'End Date' in before_state.columns and 'End Time' in before_state.columns:
-            for idx, row in before_state.iterrows():
-                if pd.notnull(row['End Date']) and pd.notnull(row['End Time']):
-                    try:
-                        end_datetime = pd.to_datetime(f"{row['End Date']} {row['End Time']}")
-                        if end_datetime >= target_time:
-                            # This alert hadn't ended yet at target time
-                            before_state.at[idx, 'End Date'] = None
-                            before_state.at[idx, 'End Time'] = None
-                    except:
-                        # If conversion fails, assume it hadn't ended
-                        before_state.at[idx, 'End Date'] = None
-                        before_state.at[idx, 'End Time'] = None
-        
-        # Create "after" state - add alerts that triggered AT the target time
-        target_time_window = target_time + timedelta(minutes=1)  # 1-minute window
-        
-        new_at_target = current_data[
-            (current_data['trigger_datetime'] >= target_time) & 
-            (current_data['trigger_datetime'] < target_time_window)
-        ].copy()
-        
-        after_state = pd.concat([before_state, new_at_target]).drop_duplicates()
+        # For the "before" state, nullify any end times that happened at or after the target time
+        if 'End Time' in before_state.columns:
+            # Combine End Date and End Time, coercing errors
+            end_datetime_str = before_state['End Date'].astype(str) + ' ' + before_state['End Time'].astype(str)
+            end_datetimes = pd.to_datetime(end_datetime_str, errors='coerce').dt.tz_localize(self.cst)
+            
+            # Find rows where the end time is at or after our target simulation time
+            mask_to_reopen = end_datetimes >= target_time
+            before_state.loc[mask_to_reopen, 'End Time'] = None
+            before_state.loc[mask_to_reopen, 'End Date'] = None
+
+        # Create "after" state: includes everything from "before" plus events at the target time
+        after_state = df[df['trigger_datetime'] <= target_time].copy()
         
         # Add unique keys for comparison
-        before_state['UniqueKey'] = (
-            before_state['Symbol'].astype(str) + "_" + 
-            before_state['Trigger Date'].astype(str) + "_" + 
-            before_state['Trigger Time'].astype(str)
-        )
-        
-        after_state['UniqueKey'] = (
-            after_state['Symbol'].astype(str) + "_" + 
-            after_state['Trigger Date'].astype(str) + "_" + 
-            after_state['Trigger Time'].astype(str)
-        )
+        before_state['UniqueKey'] = before_state['Symbol'].astype(str) + "_" + before_state['Trigger Date'].astype(str) + "_" + before_state['Trigger Time'].astype(str)
+        after_state['UniqueKey'] = after_state['Symbol'].astype(str) + "_" + after_state['Trigger Date'].astype(str) + "_" + after_state['Trigger Time'].astype(str)
         
         return before_state, after_state
     
@@ -141,159 +89,279 @@ class TimeTravelTester:
         """
         Detect new and ended alerts between states
         """
-        new_alerts = pd.DataFrame()
-        ended_alerts = pd.DataFrame()
-        
+        # Find new alerts - use anti-join to get records in after_state but not in before_state
         if before_state.empty:
-            # All alerts in after_state are new
             new_alerts = after_state.copy()
         else:
-            # Find new alerts (in after but not in before)
-            before_keys = set(before_state['UniqueKey'])
-            after_keys = set(after_state['UniqueKey'])
-            new_keys = after_keys - before_keys
+            # Use indicator=True and then filter, but keep only the original columns from after_state
+            merged = after_state.merge(before_state[['UniqueKey']], on='UniqueKey', how='left', indicator=True)
+            new_alert_mask = merged['_merge'] == 'left_only'
+            # Select only the original after_state columns (exclude the _merge column)
+            new_alerts = after_state[new_alert_mask].copy()
+
+        # Find ended alerts - alerts that were open before but are now closed
+        if before_state.empty:
+            ended_alerts = pd.DataFrame()
+        else:
+            previously_open = before_state[pd.isnull(before_state['End Time'])]
+            currently_closed = after_state[pd.notnull(after_state['End Time'])]
             
-            if new_keys:
-                new_alerts = after_state[after_state['UniqueKey'].isin(new_keys)].copy()
-            
-            # Find ended alerts (were open in before, now have end time in after)
-            if 'End Time' in before_state.columns and 'End Time' in after_state.columns:
-                previously_open = before_state[pd.isnull(before_state['End Time'])]
-                currently_closed = after_state[pd.notnull(after_state['End Time'])]
-                
-                if not previously_open.empty and not currently_closed.empty:
-                    ended_keys = set(previously_open['UniqueKey']) & set(currently_closed['UniqueKey'])
-                    if ended_keys:
-                        ended_alerts = currently_closed[currently_closed['UniqueKey'].isin(ended_keys)].copy()
-        
+            ended_alerts = pd.DataFrame()
+            if not previously_open.empty and not currently_closed.empty:
+                # Get the UniqueKeys that were previously open but are now closed
+                ended_keys = previously_open.merge(currently_closed[['UniqueKey']], on='UniqueKey', how='inner')['UniqueKey']
+                # Get the full records from the before_state
+                ended_alerts = previously_open[previously_open['UniqueKey'].isin(ended_keys)].copy()
+
         return new_alerts, ended_alerts
+    
+    def _format_simulation_results_with_intelligence(self, target_time: datetime, before_state: pd.DataFrame,
+                                  after_state: pd.DataFrame, new_alerts: pd.DataFrame,
+                                  ended_alerts: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Format simulation results with intelligence analysis
+        """
+        result = {
+            "simulation_time": target_time.strftime('%Y-%m-%d %H:%M:%S CST'),
+            "detected_changes": {
+                "new_alerts": len(new_alerts),
+                "ended_alerts": len(ended_alerts),
+                "new_alert_details": [],
+            },
+            "discord_preview": None,
+            "intelligence_preview": None
+        }
+        
+        if not new_alerts.empty:
+            # Add intelligence analysis to time travel results
+            try:
+                from alerts.enhanced_alert_manager import EnhancedAlertManager
+                
+                # Create a dummy discord client for the enhanced manager
+                class DummyDiscordClient:
+                    def send_alert(self, **kwargs):
+                        return True
+                
+                dummy_discord = DummyDiscordClient()
+                
+                # Create enhanced alert manager
+                enhanced_manager = EnhancedAlertManager(
+                    discord_client=dummy_discord,
+                    template_manager=self.template_manager,
+                    vip_symbols=self.vip_symbols
+                )
+                
+                # Clean the after_state for intelligence analysis
+                clean_df = self._clean_dataframe_for_intelligence(after_state)
+                
+                # Analyze with intelligence
+                intelligence_results = enhanced_manager.intelligence_engine.analyze_batch(new_alerts, clean_df)
+                
+                # Create enhanced Discord preview using intelligence
+                enhanced_alert_data = self._create_intelligent_alert_preview(
+                    new_alerts, ended_alerts, intelligence_results, enhanced_manager
+                )
+                
+                result["discord_preview"] = enhanced_alert_data
+                
+                result["intelligence_preview"] = {
+                    "total_analyzed": len(intelligence_results),
+                    "vip_alerts": len([r for r in intelligence_results if r['priority'] == 'VIP']),
+                    "double_mint_alerts": len([r for r in intelligence_results if r['is_double_mint']]),
+                    "high_frequency_alerts": len([r for r in intelligence_results if r['frequency'] >= 15]),
+                    "analysis_details": [
+                        {
+                            "symbol": r['row_data']['Symbol'],
+                            "priority": r['priority'],
+                            "priority_emoji": r['priority_emoji'],
+                            "frequency": r['frequency'],
+                            "frequency_tier": r['frequency_tier'],
+                            "double_mint": r['is_double_mint'],
+                            "underlying_asset": r['underlying_asset'],
+                            "enhanced_details": r['enhanced_details']
+                        }
+                        for r in intelligence_results
+                    ]
+                }
+                
+                logging.info(f"🧠 Intelligence analysis: {len(intelligence_results)} alerts analyzed")
+                
+            except Exception as e:
+                logging.warning(f"Could not generate intelligence preview for time travel: {e}")
+                # Fallback to basic formatting
+                formatter = self.template_manager.get_formatter('short_sale')
+                alert_data = formatter.format_changes_alert(new_alerts, ended_alerts)
+                result["discord_preview"] = alert_data
+                result["intelligence_preview"] = {"error": str(e)}
+            
+            # Add basic alert details
+            for _, row in new_alerts.iterrows():
+                result["detected_changes"]["new_alert_details"].append({
+                    "symbol": row['Symbol'], 
+                    "security_name": row.get('Security Name', ''),
+                    "trigger_time": f"{row['Trigger Date']} {row['Trigger Time']}",
+                    "is_vip": row['Symbol'] in self.vip_symbols
+                })
+        
+        else:
+            # No new alerts, use basic formatting for ended alerts only
+            if not ended_alerts.empty:
+                formatter = self.template_manager.get_formatter('short_sale')
+                alert_data = formatter.format_changes_alert(new_alerts, ended_alerts)
+                result["discord_preview"] = alert_data
+        
+        return result
+    
+    def _clean_dataframe_for_intelligence(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Clean DataFrame to ensure it works with intelligence analysis"""
+        clean_df = df.copy()
+        
+        # Remove temporary columns that might interfere with intelligence
+        temp_columns = ['UniqueKey', 'trigger_datetime', '_merge']
+        for col in temp_columns:
+            if col in clean_df.columns:
+                clean_df = clean_df.drop(columns=[col])
+        
+        # Ensure required columns exist
+        required_columns = ['Symbol', 'Trigger Date', 'Trigger Time', 'Security Name']
+        missing_columns = [col for col in required_columns if col not in clean_df.columns]
+        
+        if missing_columns:
+            logging.warning(f"Missing columns for intelligence analysis: {missing_columns}")
+            # Add empty columns for missing ones
+            for col in missing_columns:
+                clean_df[col] = ''
+        
+        return clean_df
+    
+    def _create_intelligent_alert_preview(self, new_breakers_df: pd.DataFrame, 
+                                        ended_breakers_df: pd.DataFrame, 
+                                        intelligent_results: List[Dict],
+                                        enhanced_manager) -> Dict:
+        """
+        Create alert preview with intelligence enhancements for time travel testing
+        """
+        try:
+            # Generate the basic alert using existing template system
+            formatter = self.template_manager.get_formatter('short_sale')
+            alert_data = formatter.format_changes_alert(new_breakers_df, ended_breakers_df)
+            
+            # Enhance the alert with intelligence data
+            if intelligent_results:
+                enhanced_message = enhanced_manager._enhance_alert_message(alert_data['message'], intelligent_results)
+                alert_data['message'] = enhanced_message
+                
+                # Adjust color based on priority
+                alert_data['color'] = enhanced_manager._determine_alert_color(intelligent_results)
+                
+                # Enhance title with priority indicators
+                alert_data['title'] = enhanced_manager._enhance_alert_title(alert_data['title'], intelligent_results)
+            
+            return alert_data
+            
+        except Exception as e:
+            logging.error(f"Error creating intelligent alert preview: {e}")
+            # Fallback to basic alert
+            formatter = self.template_manager.get_formatter('short_sale')
+            return formatter.format_changes_alert(new_breakers_df, ended_breakers_df)
     
     def _format_simulation_results(self, target_time: datetime, before_state: pd.DataFrame,
                                   after_state: pd.DataFrame, new_alerts: pd.DataFrame,
                                   ended_alerts: pd.DataFrame) -> Dict[str, Any]:
         """
-        Format simulation results for display
+        Legacy format simulation results for backwards compatibility
         """
-        result = {
-            "simulation_time": target_time.strftime('%Y-%m-%d %H:%M:%S CST'),
-            "before_state": {
-                "total_alerts": len(before_state),
-                "open_alerts": len(before_state[pd.isnull(before_state['End Time'])]) if not before_state.empty else 0,
-                "sample_alerts": []
-            },
-            "after_state": {
-                "total_alerts": len(after_state),
-                "open_alerts": len(after_state[pd.isnull(after_state['End Time'])]) if not after_state.empty else 0,
-                "sample_alerts": []
-            },
-            "detected_changes": {
-                "new_alerts": len(new_alerts),
-                "ended_alerts": len(ended_alerts),
-                "new_alert_details": [],
-                "ended_alert_details": []
-            },
-            "discord_preview": None
-        }
-        
-        # Add sample alerts from before state
-        if not before_state.empty:
-            open_before = before_state[pd.isnull(before_state['End Time'])].head(3)
-            for _, row in open_before.iterrows():
-                result["before_state"]["sample_alerts"].append({
-                    "symbol": row['Symbol'],
-                    "security_name": row.get('Security Name', ''),
-                    "trigger_time": f"{row['Trigger Date']} {row['Trigger Time']}",
-                    "is_vip": row['Symbol'] in self.vip_symbols
-                })
-        
-        # Add sample alerts from after state
-        if not after_state.empty:
-            open_after = after_state[pd.isnull(after_state['End Time'])].head(3)
-            for _, row in open_after.iterrows():
-                result["after_state"]["sample_alerts"].append({
-                    "symbol": row['Symbol'],
-                    "security_name": row.get('Security Name', ''),
-                    "trigger_time": f"{row['Trigger Date']} {row['Trigger Time']}",
-                    "is_vip": row['Symbol'] in self.vip_symbols
-                })
-        
-        # Add new alert details
-        if not new_alerts.empty:
-            for _, row in new_alerts.iterrows():
-                result["detected_changes"]["new_alert_details"].append({
-                    "symbol": row['Symbol'],
-                    "security_name": row.get('Security Name', ''),
-                    "trigger_time": f"{row['Trigger Date']} {row['Trigger Time']}",
-                    "is_vip": row['Symbol'] in self.vip_symbols
-                })
-        
-        # Add ended alert details
-        if not ended_alerts.empty:
-            for _, row in ended_alerts.iterrows():
-                result["detected_changes"]["ended_alert_details"].append({
-                    "symbol": row['Symbol'],
-                    "security_name": row.get('Security Name', ''),
-                    "end_time": f"{row.get('End Date', 'N/A')} {row.get('End Time', 'N/A')}",
-                    "is_vip": row['Symbol'] in self.vip_symbols
-                })
-        
-        # Generate Discord preview if there are changes
-        if not new_alerts.empty or not ended_alerts.empty:
-            formatter = self.template_manager.get_formatter('short_sale')
-            alert_data = formatter.format_changes_alert(new_alerts, ended_alerts)
-            result["discord_preview"] = alert_data
-        
-        return result
+        return self._format_simulation_results_with_intelligence(
+            target_time, before_state, after_state, new_alerts, ended_alerts
+        )
     
     def get_suggested_test_times(self) -> list:
         """
-        Suggest good test times based on current CBOE data
+        Suggest good test times based on current CBOE data with VIP prioritization
+        """
+        try:
+            monitor = ShortSaleMonitor()
+            current_data = monitor.fetch_data()
+            
+            if current_data is None or current_data.empty: 
+                return []
+            
+            # Sort by date and prioritize VIP symbols
+            current_data['is_vip'] = current_data['Symbol'].isin(self.vip_symbols)
+            recent_triggers = current_data.sort_values(['is_vip', 'Trigger Date'], ascending=[False, False]).head(20)
+            
+            suggestions = []
+            seen_symbols = set()
+            
+            for _, row in recent_triggers.iterrows():
+                try:
+                    symbol = row['Symbol']
+                    
+                    # Avoid duplicate symbols in suggestions
+                    if symbol in seen_symbols:
+                        continue
+                    seen_symbols.add(symbol)
+                    
+                    vip_indicator = "⭐ VIP" if symbol in self.vip_symbols else ""
+                    description = f"Test detection of {symbol} alert"
+                    if symbol in self.vip_symbols:
+                        description += " (VIP Symbol)"
+                    
+                    suggestions.append({
+                        "test_time": f"{row['Trigger Date']} {row['Trigger Time']}",
+                        "description": description,
+                        "symbol": symbol,
+                        "is_vip": symbol in self.vip_symbols
+                    })
+                    
+                    # Limit to 8 suggestions
+                    if len(suggestions) >= 8:
+                        break
+                        
+                except Exception as e:
+                    logging.debug(f"Error processing suggestion for row: {e}")
+                    continue
+            
+            return suggestions
+            
+        except Exception as e:
+            logging.error(f"Error generating test suggestions: {e}")
+            return []
+
+    def get_intelligence_summary(self) -> Dict[str, Any]:
+        """
+        Get intelligence summary of current CBOE data for testing
         """
         try:
             monitor = ShortSaleMonitor()
             current_data = monitor.fetch_data()
             
             if current_data is None or current_data.empty:
-                return []
+                return {"error": "No data available"}
             
-            # Get recent trigger times
-            recent_triggers = current_data.sort_values('Trigger Date', ascending=False).head(10)
+            # Quick intelligence analysis
+            vip_count = len(current_data[current_data['Symbol'].isin(self.vip_symbols)])
+            total_symbols = len(current_data['Symbol'].unique())
+            symbol_frequencies = current_data['Symbol'].value_counts()
+            high_freq_symbols = symbol_frequencies[symbol_frequencies >= 15]
             
-            suggestions = []
-            for _, row in recent_triggers.iterrows():
-                # Convert trigger time to datetime and add 1 minute for "after" simulation
-                try:
-                    trigger_dt = datetime.strptime(f"{row['Trigger Date']} {row['Trigger Time']}", 
-                                                 "%Y-%m-%d %H:%M:%S")
-                    test_time = trigger_dt + timedelta(minutes=1)
-                    
-                    suggestions.append({
-                        "test_time": test_time.strftime("%Y-%m-%d %H:%M:%S"),
-                        "description": f"Test detection of {row['Symbol']} alert at {row['Trigger Time']}",
-                        "symbol": row['Symbol'],
-                        "is_vip": row['Symbol'] in self.vip_symbols
-                    })
-                except Exception as e:
-                    logging.debug(f"Skipping suggestion due to date parsing error: {e}")
-                    continue
-            
-            return suggestions[:5]  # Return top 5 suggestions
+            return {
+                "total_records": len(current_data),
+                "unique_symbols": total_symbols,
+                "vip_symbols_active": vip_count,
+                "high_frequency_symbols": len(high_freq_symbols),
+                "top_frequency_symbols": symbol_frequencies.head(5).to_dict(),
+                "vip_symbols_found": [symbol for symbol in self.vip_symbols if symbol in current_data['Symbol'].values]
+            }
             
         except Exception as e:
-            logging.error(f"Error generating test suggestions: {e}")
-            return []
+            logging.error(f"Error getting intelligence summary: {e}")
+            return {"error": str(e)}
 
 
 def run_time_travel_test(target_time: str, vip_symbols=None) -> Dict[str, Any]:
     """
-    Convenience function to run a time travel test
-    
-    Args:
-        target_time: Time string in format "2025-08-12 09:35:00"
-        vip_symbols: List of VIP symbols
-        
-    Returns:
-        Test results dictionary
+    Convenience function to run a time travel test with intelligence
     """
     tester = TimeTravelTester(vip_symbols=vip_symbols)
     return tester.simulate_historical_check(target_time)
@@ -301,7 +369,15 @@ def run_time_travel_test(target_time: str, vip_symbols=None) -> Dict[str, Any]:
 
 def get_test_suggestions(vip_symbols=None) -> list:
     """
-    Get suggested test times based on recent CBOE data
+    Get suggested test times based on recent CBOE data with VIP prioritization
     """
     tester = TimeTravelTester(vip_symbols=vip_symbols)
     return tester.get_suggested_test_times()
+
+
+def get_intelligence_test_summary(vip_symbols=None) -> Dict[str, Any]:
+    """
+    Get intelligence summary for testing purposes
+    """
+    tester = TimeTravelTester(vip_symbols=vip_symbols)
+    return tester.get_intelligence_summary()
