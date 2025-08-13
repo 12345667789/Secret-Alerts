@@ -223,17 +223,24 @@ def test_batching():
 
 # Replace the placeholder time_travel route with this functional code
 
+# Replace the old time_travel route with this corrected version
+
 @app.route('/time-travel')
 def time_travel():
-    """Runs the time travel test and displays the results."""
+    """Runs the time travel test for the current time and displays the results."""
     try:
-        # This function is called from your testing module
-        results = run_time_travel_test()
+        # Create a timezone-aware datetime object for the current time
+        cst = pytz.timezone('America/Chicago')
+        target_time = datetime.now(cst)
+        
+        # Call the test function with the required 'target_time' argument
+        results = run_time_travel_test(target_time=target_time)
         
         # Format the results for display in the browser
         return f"""
         <html><body style="font-family: monospace; background: #121212; color: #e0e0e0; padding: 2rem;">
         <h2>Time Travel Test Results</h2>
+        <p><strong>Test run for time:</strong> {target_time.strftime('%Y-%m-%d %H:%M:%S CST')}</p>
         <pre style="background: #1e1e1e; padding: 1rem; border-radius: 8px; white-space: pre-wrap; word-wrap: break-word;">{json.dumps(results, indent=2)}</pre>
         <a href="/">- Back to Dashboard</a>
         </body></html>
@@ -241,7 +248,6 @@ def time_travel():
     except Exception as e:
         logging.error(f"Time travel test failed: {e}", exc_info=True)
         return f"Time travel test failed: {str(e)}", 500
-
 # --- Application Startup ---
 if __name__ == '__main__':
     logging.info("--- Starting Secret_Alerts Locally---")
