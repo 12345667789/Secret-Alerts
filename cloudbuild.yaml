@@ -1,14 +1,29 @@
 # cloudbuild.yaml
 steps:
-# 1. Build the container image using the Dockerfile
+# 1. Pull the latest version of the image to use as a cache.
+# The '|| exit 0' ensures this step doesn't fail if the image doesn't exist yet.
 - name: 'gcr.io/cloud-builders/docker'
-  args: ['build', '-t', 'gcr.io/$PROJECT_ID/secret-alerts-system:$COMMIT_SHA', '.']
+  entrypoint: 'bash'
+  args: ['-c', 'docker pull gcr.io/$PROJECT_ID/secret-alerts-system:latest || exit 0']
 
-# 2. Push the container image to Google Container Registry
+# 2. Build the new image, using the old one as a cache.
+# We also tag this new build as 'latest' so the *next* build can use it.
 - name: 'gcr.io/cloud-builders/docker'
-  args: ['push', 'gcr.io/$PROJECT_ID/secret-alerts-system:$COMMIT_SHA']
+  args:
+    - 'build'
+    - '--cache-from'
+    - 'gcr.io/$PROJECT_ID/secret-alerts-system:latest'
+    - '-t'
+    - 'gcr.io/$PROJECT_ID/secret-alerts-system:$COMMIT_SHA'
+    - '-t'
+    - 'gcr.io/$PROJECT_ID/secret-alerts-system:latest'
+    - '.'
 
-# 3. Deploy the new image to Cloud Run
+# 3. Push both tags for the new image.
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'gcr.io/$PROJECT_ID/secret-alerts-system']
+
+# 4. Deploy the new image to Cloud Run using its unique commit SHA.
 - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
   entrypoint: gcloud
   args:
@@ -20,6 +35,6 @@ steps:
     - '--platform=managed'
     - '--allow-unauthenticated'
 
-# Fix the logging issue
+# Keep the logging option
 options:
   logging: CLOUD_LOGGING_ONLY

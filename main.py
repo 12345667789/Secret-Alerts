@@ -17,16 +17,15 @@ from monitors.cboe_monitor import ShortSaleMonitor
 from config.settings import get_config, get_config_from_firestore
 from services.health_monitor import EnhancedHealthMonitor
 from services.alert_batcher import SmartAlertBatcher
-
-# Add this line with your other custom imports
 from alerts.alert_intelligence import quick_analyze
-
-# Add this with your other custom imports
 from testing.time_travel_tester import run_time_travel_test, get_test_suggestions
 
 # --- Global Application Setup ---
 app = Flask(__name__)
 config = get_config()
+
+# NEW: A lock to make log access thread-safe
+log_lock = threading.Lock()
 
 # Logging setup moved here to ensure it runs under Gunicorn
 log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
@@ -39,7 +38,9 @@ if root_logger.hasHandlers():
 recent_logs = deque(maxlen=20)
 class CaptureLogsHandler(logging.Handler):
     def emit(self, record):
-        recent_logs.append(self.format(record))
+        # MODIFIED: Use the lock to safely write to the logs
+        with log_lock:
+            recent_logs.append(self.format(record))
 
 capture_handler = CaptureLogsHandler()
 capture_handler.setFormatter(log_formatter)
@@ -58,8 +59,14 @@ template_manager = AlertTemplateManager(vip_symbols=config.vip_tickers)
 
 @app.route('/')
 def dashboard():
+    # MODIFIED: Use the lock to safely read the logs
+    with log_lock:
+        # Create a safe copy of the logs to iterate over
+        logs_to_display = list(recent_logs)
+    
     log_html = ""
-    for log in reversed(recent_logs):
+    # Iterate over the safe copy
+    for log in reversed(logs_to_display):
         css_class = "error" if any(level in log for level in ["ERROR", "CRITICAL"]) else "warning" if "WARNING" in log else "success"
         log_html += f'<div class="{css_class}">{log}</div>'
     return render_template('dashboard.html', logs_html=log_html)
@@ -156,8 +163,6 @@ def reset_monitor_state():
     
     return redirect(url_for('dashboard'))
 
-# Replace the placeholder test routes with this functional code
-
 @app.route('/test-intelligence')
 def test_intelligence():
     """Test the intelligence system by analyzing the most recent circuit breaker."""
@@ -168,12 +173,10 @@ def test_intelligence():
         if full_df is None or full_df.empty:
             return "No data available for intelligence testing", 400
 
-        # Analyze the most recent symbol
         sample_symbol = full_df.iloc[0]['Symbol']
         sample_date = full_df.iloc[0]['Trigger Date']
         result = quick_analyze(sample_symbol, sample_date, full_df, config.vip_tickers)
 
-        # Return a simple formatted HTML page
         return f"""
         <html><body style="font-family: monospace; background: #121212; color: #e0e0e0; padding: 2rem;">
         <h2>Intelligence Test Results for: {sample_symbol}</h2>
@@ -189,7 +192,6 @@ def test_intelligence():
 def test_batching():
     """Display the current smart batching mode and window."""
     try:
-        # This logic determines the batching state based on the current time
         cst = pytz.timezone('America/Chicago')
         now_cst = datetime.now(cst)
         current_time = now_cst.time()
@@ -221,10 +223,6 @@ def test_batching():
         logging.error(f"Batching test failed: {e}", exc_info=True)
         return f"Test failed: {str(e)}", 500
 
-# Replace the placeholder time_travel route with this functional code
-
-# Replace the old time_travel route with this corrected version
-# In main.py
 @app.route('/time-travel')
 def time_travel():
     target_time_str = request.args.get('time')
@@ -234,9 +232,29 @@ def time_travel():
             target_time = datetime.strptime(target_time_str, '%Y-%m-%d %H:%M:%S')
             target_time = pytz.timezone('America/Chicago').localize(target_time)
             results = run_time_travel_test(target_time=target_time, vip_symbols=config.vip_tickers)
-            # RENDER THE NEW HTML TEMPLATE
             return render_template('time_travel_results.html', results=results)
         except Exception as e:
-            # ... (error handling remains the same)
+            logging.error(f"Time travel test failed: {e}", exc_info=True)
+            return f"Time travel test failed: {str(e)}", 500
     else:
-        # ... (suggestion list logic remains the same)
+        suggestions = get_test_suggestions(vip_symbols=config.vip_tickers)
+        html = """
+        <html><body style="font-family: monospace; background: #121212; color: #e0e0e0; padding: 2rem;">
+        <h2>Time Travel Test</h2>
+        <p>Select a historical time to simulate an alert check.</p>
+        <div style="background: #1e1e1e; padding: 1rem; border-radius: 8px;">
+        """
+        for sug in suggestions:
+            vip_label = " (💎 VIP)" if sug.get('is_vip') else ""
+            html += f'<p><a href="/time-travel?time={sug["test_time"]}" style="color: #00d9ff;">{sug["test_time"]}</a> - {sug["description"]}{vip_label}</p>'
+        html += """
+        </div>
+        <br/><a href="/">- Back to Dashboard</a>
+        </body></html>
+        """
+        return html
+
+# --- Application Startup ---
+if __name__ == '__main__':
+    logging.info("--- Starting Secret_Alerts Locally---")
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)), debug=True)
