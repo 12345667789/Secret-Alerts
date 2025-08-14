@@ -3,11 +3,11 @@ import logging
 from google.cloud import firestore
 import requests
 from io import StringIO
-from typing import Union
+from typing import Union, Tuple
 
 class ShortSaleMonitor:
     """
-    Monitors short sale circuit breaker data from CBOE, managing state via Firestore database.
+    Monitors short sale circuit breaker data from CBOE, managing state via Firestore.
     """
     
     CBOE_URL = "https://www.cboe.com/us/equities/market_statistics/short_sale_circuit_breakers/downloads/BatsCircuitBreakers2025.csv"
@@ -15,7 +15,6 @@ class ShortSaleMonitor:
     FIRESTORE_DOC = 'short_sale_monitor_state'
 
     def __init__(self):
-        # CORRECT PLACEMENT: The logger must be initialized inside the __init__ method.
         self.logger = logging.getLogger(__name__)
         try:
             self.db = firestore.Client()
@@ -24,13 +23,13 @@ class ShortSaleMonitor:
             self.logger.error(f"Failed to connect to Firestore: {e}", exc_info=True)
             self.db = None
 
-   def fetch_data(self) -> Union[pd.DataFrame, None]:
+    def fetch_data(self) -> Union[pd.DataFrame, None]:
         """
         Fetches the current short sale circuit breaker data from the CBOE URL.
         """
         self.logger.info(f"Fetching data from {self.CBOE_URL}")
         try:
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36'}
+            headers = {'User-Agent': 'Mozilla/5.0'}
             response = requests.get(self.CBOE_URL, headers=headers)
             response.raise_for_status()
             
@@ -43,7 +42,7 @@ class ShortSaleMonitor:
             self.logger.error(f"An unexpected error occurred during data fetching: {e}", exc_info=True)
         return None
 
-    def _load_previous_state(self) -> pd.DataFrame | None:
+    def _load_previous_state(self) -> Union[pd.DataFrame, None]:
         """
         Loads the previously stored state from Firestore.
         """
@@ -77,7 +76,7 @@ class ShortSaleMonitor:
         except Exception as e:
             self.logger.error(f"Error saving state to Firestore: {e}", exc_info=True)
 
-    def check_for_new_and_ended_breakers(self):
+    def check_for_new_and_ended_breakers(self) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Fetches the latest data, compares it with the previous state,
         and returns dataframes of new and ended breakers.
@@ -107,7 +106,7 @@ class ShortSaleMonitor:
         self.logger.info(f"Check complete. Found {len(new_breakers)} new breakers & {len(ended_breakers)} ended breakers")
         return new_breakers, ended_breakers
 
-    def _detect_changes(self, old_df: pd.DataFrame, new_df: pd.DataFrame) -> (pd.DataFrame, pd.DataFrame):
+    def _detect_changes(self, old_df: pd.DataFrame, new_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Compares two dataframes to identify new and ended circuit breakers.
         """
