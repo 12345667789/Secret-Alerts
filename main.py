@@ -20,7 +20,7 @@ from services.alert_batcher import SmartAlertBatcher
 from alerts.alert_intelligence import quick_analyze
 from testing.time_travel_tester import run_time_travel_test, get_test_suggestions
 
-# --- Global Application Setup ---
+# --- Global Application Setup! ---
 app = Flask(__name__)
 config = get_config()
 
