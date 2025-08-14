@@ -25,7 +25,7 @@ steps:
     - 'run'
     - 'deploy'
     - 'secret-alerts-system'
-    - '--image' # <-- CORRECTED SYNTAXX
+    - '--image' # <-- CORRECTED SYNTAX
     - 'gcr.io/$PROJECT_ID/secret-alerts-system:$COMMIT_SHA' # <-- CORRECTED SYNTAX
     - '--region=us-central1'
     - '--platform=managed'
