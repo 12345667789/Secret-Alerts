@@ -20,7 +20,6 @@ from services.alert_batcher import SmartAlertBatcher
 
 # --- Global Application Setup ---
 app = Flask(__name__)
-# CORRECTED: The typo 'get_gconfig()' has been fixed to 'get_config()'.
 config = get_config()
 log_lock = threading.Lock()
 
@@ -77,7 +76,6 @@ def run_check_endpoint():
 
         discord_client = DiscordClient(webhook_url=webhook_url)
         alert_manager = EnhancedAlertManager(discord_client, template_manager, config.vip_tickers)
-
         log_msg = f"Analysis complete. Found {len(new_breakers_df)} new, {len(ended_breakers_df)} ended."
         health_monitor.log_transaction(log_msg, "INFO")
         app.logger.info(log_msg)
@@ -89,14 +87,14 @@ def run_check_endpoint():
             app.smart_batcher.queue_alert(new_breakers_df, ended_breakers_df, full_df)
         else:
             app.logger.info("No new or ended circuit breakers found.")
-
         return "Check completed successfully.", 200
-
     except Exception as e:
         error_msg = f"An error occurred during the scheduled check: {e}"
         app.logger.error(error_msg, exc_info=True)
         health_monitor.record_check_attempt(success=False, error=str(e))
         return "An error occurred during the check.", 500
+
+# --- Admin & Utility Routes ---
 
 @app.route('/report-open-alerts', methods=['POST'])
 def report_open_alerts():
@@ -104,6 +102,7 @@ def report_open_alerts():
     submitted_password = request.form.get('password')
     correct_password = get_config_from_firestore('security', 'dashboard_password')
     if not correct_password or submitted_password != correct_password:
+        app.logger.warning("Failed login attempt for open alerts report.")
         return "Invalid password.", 403
 
     try:
@@ -112,18 +111,15 @@ def report_open_alerts():
         alert_manager = EnhancedAlertManager(discord_client, template_manager, config.vip_tickers)
         monitor = ShortSaleMonitor()
         current_df = monitor.fetch_data()
-
         if current_df is None or current_df.empty:
             alert_manager.send_formatted_alert({'title': "Open Alerts Report", 'message': "Could not retrieve data.", 'color': 0xfca311})
             return redirect(url_for('dashboard'))
-
         open_alerts = current_df[pd.isnull(current_df['End Time'])]
         formatter = template_manager.get_formatter('short_sale')
         alert_data = formatter.format_open_alerts_report(open_alerts)
         alert_manager.send_formatted_alert(alert_data)
     except Exception as e:
         app.logger.error(f"Failed to generate open alerts report: {e}", exc_info=True)
-
     return redirect(url_for('dashboard'))
 
 @app.route('/reset-monitor-state', methods=['POST'])
@@ -132,8 +128,8 @@ def reset_monitor_state():
     submitted_password = request.form.get('password')
     correct_password = get_config_from_firestore('security', 'dashboard_password')
     if not correct_password or submitted_password != correct_password:
+        app.logger.warning("Failed login attempt for monitor state reset.")
         return "Invalid password.", 403
-
     try:
         db = firestore.Client()
         doc_ref = db.collection('app_config').document('short_sale_monitor_state')
@@ -143,25 +139,22 @@ def reset_monitor_state():
     except Exception as e:
         app.logger.error(f"Failed to delete monitor state: {e}", exc_info=True)
         health_monitor.log_transaction(f"Error resetting state: {e}", "ERROR")
-    
     return redirect(url_for('dashboard'))
 
 # --- Test Routes ---
 
 @app.route('/test-intelligence')
 def test_intelligence():
-    """Test the intelligence system by analyzing the most recent circuit breaker."""
+    # Local import to prevent test code from loading in production
     from alerts.alert_intelligence import quick_analyze
     try:
         monitor = ShortSaleMonitor()
         full_df = monitor.fetch_data()
         if full_df is None or full_df.empty:
             return "No data available for intelligence testing", 400
-
         sample_symbol = full_df.iloc[0]['Symbol']
         sample_date = full_df.iloc[0]['Trigger Date']
         result = quick_analyze(sample_symbol, sample_date, full_df, config.vip_tickers)
-
         return f"""
         <html><body style="font-family: monospace; background: #121212; color: #e0e0e0; padding: 2rem;">
         <h2>Intelligence Test Results for: {sample_symbol}</h2>
@@ -175,25 +168,19 @@ def test_intelligence():
 
 @app.route('/test-batching')
 def test_batching():
-    """Display the current smart batching mode and wind0ow."""
     try:
         cst = pytz.timezone('America/Chicago')
         now_cst = datetime.now(cst)
         current_time = now_cst.time()
         from datetime import time as dt_time
-        
         rush_start, rush_end = dt_time(9, 20), dt_time(10, 0)
         market_start, market_end = dt_time(9, 30), dt_time(16, 0)
         premarket_start = dt_time(8, 0)
 
-        if rush_start <= current_time <= rush_end:
-            mode, window = "🔥 RUSH HOUR", 90
-        elif market_start <= current_time <= market_end:
-            mode, window = "📈 MARKET HOURS", 45
-        elif premarket_start <= current_time < rush_start:
-            mode, window = "🌅 PRE-MARKET", 30
-        else:
-            mode, window = "🌙 AFTER HOURS", 15
+        if rush_start <= current_time <= rush_end: mode, window = "🔥 RUSH HOUR", 90
+        elif market_start <= current_time <= market_end: mode, window = "📈 MARKET HOURS", 45
+        elif premarket_start <= current_time < rush_start: mode, window = "🌅 PRE-MARKET", 30
+        else: mode, window = "🌙 AFTER HOURS", 15
 
         return f"""
         <html><body style="font-family: monospace; background: #121212; color: #e0e0e0; padding: 2rem;">
@@ -210,9 +197,8 @@ def test_batching():
 
 @app.route('/time-travel')
 def time_travel():
-    """Runs a time travel test or shows suggestions."""
+    # Local imports to prevent test code from loading in production
     from testing.time_travel_tester import run_time_travel_test, get_test_suggestions
-
     target_time_str = request.args.get('time')
     if target_time_str:
         try:
@@ -229,8 +215,7 @@ def time_travel():
         <html><body style="font-family: monospace; background: #121212; color: #e0e0e0; padding: 2rem;">
         <h2>Time Travel Test</h2>
         <p>Select a historical time to simulate an alert check.</p>
-        <div style="background: #1e1e1e; padding: 1rem; border-radius: 8px;">
-        """
+        <div style="background: #1e1e1e; padding: 1rem; border-radius: 8px;">"""
         for sug in suggestions:
             vip_label = " (💎 VIP)" if sug.get('is_vip') else ""
             html += f'<p><a href="/time-travel?time={sug["test_time"]}" style="color: #00d9ff;">{sug["test_time"]}</a> - {sug["description"]}{vip_label}</p>'
