@@ -6,7 +6,7 @@ from io import StringIO
 
 class ShortSaleMonitor:
     """
-    Monitors short sale circuit breaker data from CBOE, managing state via Firestore.
+    Monitors short sale circuit breaker data from CBOE, managing state via Firestore database.
     """
     
     CBOE_URL = "https://www.cboe.com/us/equities/market_statistics/short_sale_circuit_breakers/downloads/BatsCircuitBreakers2025.csv"
