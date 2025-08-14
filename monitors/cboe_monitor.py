@@ -14,6 +14,7 @@ class ShortSaleMonitor:
     FIRESTORE_DOC = 'short_sale_monitor_state'
 
     def __init__(self):
+        # CORRECT PLACEMENT: The logger must be initialized inside the __init__ method.
         self.logger = logging.getLogger(__name__)
         try:
             self.db = firestore.Client()
@@ -32,14 +33,11 @@ class ShortSaleMonitor:
             response = requests.get(self.CBOE_URL, headers=headers)
             response.raise_for_status()
             
-            # Use StringIO to handle the CSV data in memory
             csv_data = StringIO(response.text)
             df = pd.read_csv(csv_data)
             
             self.logger.info(f"Successfully fetched {len(df)} records from CBOE.")
             return df
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"Error fetching data from CBOE: {e}", exc_info=True)
         except Exception as e:
             self.logger.error(f"An unexpected error occurred during data fetching: {e}", exc_info=True)
         return None
@@ -70,7 +68,6 @@ class ShortSaleMonitor:
         if not self.db:
             return
         try:
-            # Convert NaN to None for Firestore compatibility
             df_cleaned = df.where(pd.notnull(df), None)
             records = df_cleaned.to_dict('records')
             doc_ref = self.db.collection(self.FIRESTORE_COLLECTION).document(self.FIRESTORE_DOC)
@@ -92,11 +89,7 @@ class ShortSaleMonitor:
             self.logger.error("Could not fetch current data. Aborting check.")
             return pd.DataFrame(), pd.DataFrame()
 
-        # --- THIS IS THE FIX ---
-        # Define the key columns used for comparison.
         key_columns = ['Symbol', 'Trigger Date', 'Trigger Time']
-        
-        # Ensure key columns exist and enforce string type for a reliable comparison.
         for df in [previous_df, current_df]:
             if df is not None and not df.empty:
                 for col in key_columns:
@@ -105,7 +98,6 @@ class ShortSaleMonitor:
                     else:
                         self.logger.error(f"Key column '{col}' not found in dataframe. Comparison may be inaccurate.")
                         df[col] = ''
-        # --- END OF FIX ---
 
         new_breakers, ended_breakers = self._detect_changes(previous_df, current_df)
         
@@ -121,24 +113,19 @@ class ShortSaleMonitor:
         if old_df is None or old_df.empty:
             return new_df, pd.DataFrame()
 
-        # Create a unique key for each record for accurate comparison
         old_df['UniqueKey'] = old_df['Symbol'] + old_df['Trigger Date'] + old_df['Trigger Time']
         new_df['UniqueKey'] = new_df['Symbol'] + new_df['Trigger Date'] + new_df['Trigger Time']
 
-        # Find new breakers (records in new_df but not in old_df)
         new_breakers = new_df[~new_df['UniqueKey'].isin(old_df['UniqueKey'])].copy()
-
-        # Find ended breakers (records that were open in old_df but are now closed in new_df)
         ended_breakers = pd.DataFrame()
+        
         open_previously = old_df[old_df['End Time'].isnull()]
         if not open_previously.empty:
             merged = pd.merge(open_previously, new_df, on='UniqueKey', how='inner', suffixes=('_old', ''))
             ended = merged[merged['End Time'].notnull()]
             if not ended.empty:
-                # To get the original record, we select columns from the new_df part of the merge
                 ended_breakers = new_df[new_df['UniqueKey'].isin(ended['UniqueKey'])].copy()
 
-        # Clean up the UniqueKey column before returning
         new_breakers = new_breakers.drop(columns=['UniqueKey'], errors='ignore')
         ended_breakers = ended_breakers.drop(columns=['UniqueKey'], errors='ignore')
 
