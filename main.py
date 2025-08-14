@@ -20,27 +20,22 @@ from services.alert_batcher import SmartAlertBatcher
 
 # --- Global Application Setup ---
 app = Flask(__name__)
-config = get_gconfig()
+# CORRECTED: The typo 'get_gconfig()' has been fixed to 'get_config()'.
+config = get_config()
 log_lock = threading.Lock()
 
 # --- Gunicorn-Compatible Logging Setup ---
-# This handler captures logs for the dashboard's "Legacy Log Viewer"
 recent_logs = deque(maxlen=20)
 class CaptureLogsHandler(logging.Handler):
     def emit(self, record):
         with log_lock:
             recent_logs.append(self.format(record))
 
-# Configure the app's logger instead of the root logger to avoid conflicts
 log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 app.logger.setLevel(logging.INFO)
-
-# Add the custom handler for the dashboard viewer
 capture_handler = CaptureLogsHandler()
 capture_handler.setFormatter(log_formatter)
 app.logger.addHandler(capture_handler)
-
-# Add a standard handler to ensure logs appear in Google Cloud Logging
 console_handler = logging.StreamHandler()
 console_handler.setFormatter(log_formatter)
 app.logger.addHandler(console_handler)
@@ -55,7 +50,6 @@ template_manager = AlertTemplateManager(vip_symbols=config.vip_tickers)
 def dashboard():
     with log_lock:
         logs_to_display = list(recent_logs)
-    
     log_html = ""
     for log in reversed(logs_to_display):
         css_class = "error" if any(level in log for level in ["ERROR", "CRITICAL"]) else "warning" if "WARNING" in log else "success"
@@ -64,12 +58,10 @@ def dashboard():
 
 @app.route('/api/health')
 def health_api():
-    """Serves the latest health data as JSON for the dashboard's live updates."""
     return jsonify(health_monitor.get_health_snapshot())
 
 @app.route('/api/intelligence')
 def intelligence_api():
-    """Serve intelligence statistics for the dashboard's live updates."""
     return jsonify(health_monitor.get_intelligence_summary())
 
 @app.route('/run-check', methods=['POST'])
@@ -159,7 +151,6 @@ def reset_monitor_state():
 @app.route('/test-intelligence')
 def test_intelligence():
     """Test the intelligence system by analyzing the most recent circuit breaker."""
-    # Local import to prevent test code from loading in production Gunicorn workers.
     from alerts.alert_intelligence import quick_analyze
     try:
         monitor = ShortSaleMonitor()
@@ -220,7 +211,6 @@ def test_batching():
 @app.route('/time-travel')
 def time_travel():
     """Runs a time travel test or shows suggestions."""
-    # Local import to prevent test code from loading in production Gunicorn workers.
     from testing.time_travel_tester import run_time_travel_test, get_test_suggestions
 
     target_time_str = request.args.get('time')
