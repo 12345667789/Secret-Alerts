@@ -1,7 +1,2 @@
-"""
-Testing module for Secret_Alerts system
-"""
-
-from .time_travel_tester import TimeTravelTester, run_time_travel_test, get_test_suggestions
-
-__all__ = ['TimeTravelTester', 'run_time_travel_test', 'get_test_suggestions']
+# This file intentionally left blank or with minimal setup
+# to prevent circular import issues.
