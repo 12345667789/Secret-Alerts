@@ -175,7 +175,7 @@ def test_intelligence():
 
 @app.route('/test-batching')
 def test_batching():
-    """Display the current smart batching mode and window."""
+    """Display the current smart batching mode and wind0ow."""
     try:
         cst = pytz.timezone('America/Chicago')
         now_cst = datetime.now(cst)
