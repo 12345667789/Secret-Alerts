@@ -23,7 +23,7 @@ app = Flask(__name__)
 config = get_config()
 log_lock = threading.Lock()
 
-# --- Gunicorn-Compatible Logging Setup ---
+# --- Gunicorn-Compatible Logging Setup ! ---
 recent_logs = deque(maxlen=20)
 class CaptureLogsHandler(logging.Handler):
     def emit(self, record):
