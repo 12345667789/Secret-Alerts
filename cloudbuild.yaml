@@ -6,7 +6,7 @@ steps:
   entrypoint: 'bash'
   args: ['-c', 'docker pull gcr.io/$PROJECT_ID/secret-alerts-system:latest || exit 0']
 
-# 2. Build the container image, using the old one as a cache.
+# 2. Build the container image, tagging it with BOTH the commit SHA and 'latest'.
 - name: 'gcr.io/cloud-builders/docker'
   args:
     - 'build'
@@ -18,23 +18,21 @@ steps:
     - 'gcr.io/$PROJECT_ID/secret-alerts-system:latest'
     - '.'
 
-# 3. Deploy to Cloud Run.
+# 3. Deploy to Cloud Run with the corrected image flag syntax.
 - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
   entrypoint: gcloud
   args:
     - 'run'
     - 'deploy'
-    - 'secret-alerts-system' # This will be overridden by the trigger, but it's good practice to have it.
-    - '--image'
-    - 'gcr.io/$PROJECT_ID/secret-alerts-system:$COMMIT_SHA'
-    - '--region'
-    - 'us-central1'
-    - '--platform'
-    - 'managed'
+    - 'secret-alerts-system'
+    - '--image' # <-- CORRECTED SYNTAX
+    - 'gcr.io/$PROJECT_ID/secret-alerts-system:$COMMIT_SHA' # <-- CORRECTED SYNTAX
+    - '--region=us-central1'
+    - '--platform=managed'
     - '--allow-unauthenticated'
     - '--memory=1Gi'
 
-# This section tells Cloud Build to automatically push the built images.
+# This tells Cloud Build to automatically push the images after a successful build.
 images:
 - 'gcr.io/$PROJECT_ID/secret-alerts-system:$COMMIT_SHA'
 - 'gcr.io/$PROJECT_ID/secret-alerts-system:latest'
