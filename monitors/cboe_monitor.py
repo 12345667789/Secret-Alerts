@@ -3,6 +3,7 @@ import logging
 from google.cloud import firestore
 import requests
 from io import StringIO
+from typing import Union
 
 class ShortSaleMonitor:
     """
@@ -23,7 +24,7 @@ class ShortSaleMonitor:
             self.logger.error(f"Failed to connect to Firestore: {e}", exc_info=True)
             self.db = None
 
-    def fetch_data(self) -> pd.DataFrame | None:
+   def fetch_data(self) -> Union[pd.DataFrame, None]:
         """
         Fetches the current short sale circuit breaker data from the CBOE URL.
         """
