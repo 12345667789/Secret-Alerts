@@ -68,7 +68,7 @@ def run_check_endpoint():
     app.logger.info("Check triggered by Cloud Scheduler.")
     monitor = ShortSaleMonitor()
     try:
-        new_breakers_df, ended_breakers_df = monitor.check_for_new_and_ended_breakers()
+        new_breakers_df, ended_breakers_df, current_df = monitor.get_changes()
         health_monitor.record_check_attempt(success=True)
         webhook_url = get_config_from_firestore('discord_webhooks', 'short_sale_alerts')
         if not webhook_url:
