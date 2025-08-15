@@ -17,6 +17,7 @@ from monitors.cboe_monitor import ShortSaleMonitor
 from config.settings import get_config, get_config_from_firestore
 from services.health_monitor import EnhancedHealthMonitor
 from services.alert_batcher import SmartAlertBatcher
+from services.speed_monitor import SpeedMonitor
 
 # --- Global Application Setup ---
 app = Flask(__name__)
@@ -42,7 +43,7 @@ app.logger.addHandler(console_handler)
 # Initialize global objects
 health_monitor = EnhancedHealthMonitor()
 template_manager = AlertTemplateManager(vip_symbols=config.vip_tickers)
-
+speed_monitor = SpeedMonitor()
 # --- Main Flask Routes ---
 
 @app.route('/')
@@ -194,6 +195,104 @@ def test_batching():
     except Exception as e:
         app.logger.error(f"Batching test failed: {e}", exc_info=True)
         return f"Test failed: {str(e)}", 500
+
+        @app.route('/speed-check', methods=['POST'])
+def speed_check_endpoint():
+    """New endpoint for 2-minute speed checks"""
+    app.logger.info("⚡ Speed check triggered")
+    
+    try:
+        success = speed_monitor.quick_check()
+        
+        if success:
+            return "Speed check completed", 200
+        else:
+            return "Speed check failed", 500
+            
+    except Exception as e:
+        app.logger.error(f"Speed check error: {e}")
+        return "Speed check error", 500
+
+@app.route('/speed-health', methods=['POST'])
+def speed_health_endpoint():
+    """Endpoint for 15-minute health reports"""
+    app.logger.info("📊 Speed health report triggered")
+    
+    try:
+        success = speed_monitor.send_health_report()
+        return "Health report sent" if success else "Health report skipped", 200
+            
+    except Exception as e:
+        app.logger.error(f"Speed health error: {e}")
+        return "Speed health error", 500
+
+@app.route('/api/speed-status')
+def speed_status_api():
+    """API endpoint for dashboard status"""
+    try:
+        status = speed_monitor.get_status()
+        return jsonify(status)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/test-discord')
+def test_discord():
+    """Test Discord functionality via web interface"""
+    try:
+        webhook_url = get_config_from_firestore('discord_webhooks', 'short_sale_alerts')
+        if not webhook_url:
+            return "❌ No webhook URL found", 500
+            
+        discord_client = DiscordClient(webhook_url)
+        
+        # Test 1: Speed alert format  
+        speed_message = f"⚡ **SPEED ALERT** ⚡\n**NEW CIRCUIT BREAKERS:** TEST-SYMBOL\n*Test at {datetime.now().strftime('%H:%M:%S')}*"
+        success1 = discord_client.send_alert(
+            "🧪 Discord Test - Speed Alert",
+            speed_message,
+            color=0xFF4500  # Orange
+        )
+        
+        # Test 2: Health report format
+        health_message = """**Speed Monitor Health Report** 🟢
+        
+**Last 15 Minutes:**
+- Checks performed: 5 (TEST)
+- Alerts sent: 1 (TEST)
+- Errors: 0
+- Current breakers: 23
+
+**Overall Stats:**
+- Total checks: 100 (TEST)
+- Success rate: 100.0%
+- Status: Testing Discord connectivity
+
+*This is a test message*"""
+
+        success2 = discord_client.send_alert(
+            "📊 Discord Test - Health Report",
+            health_message,
+            color=0x00FF00  # Green
+        )
+        
+        results = f"Speed Alert: {'✅' if success1 else '❌'}, Health Report: {'✅' if success2 else '❌'}"
+        
+        return f"""
+        <html><body style="font-family: monospace; background: #121212; color: #e0e0e0; padding: 2rem;">
+        <h2>Discord Test Results</h2>
+        <p>{results}</p>
+        <p>Check your Discord channel for 2 test messages:</p>
+        <ul>
+        <li>🟠 Orange "Speed Alert" message</li>
+        <li>🟢 Green "Health Report" message</li>
+        </ul>
+        <a href="/">← Back to Dashboard</a>
+        </body></html>
+        """
+        
+    except Exception as e:
+        return f"❌ Test error: {str(e)}", 500
+
 
 @app.route('/time-travel')
 def time_travel():

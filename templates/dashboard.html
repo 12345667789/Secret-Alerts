@@ -38,6 +38,7 @@
         .trust-header h2 { color: #4CAF50; border-bottom: 2px solid #4CAF50;}
         .intelligence-header h2 { color: #FFD700; border-bottom: 2px solid #FFD700;}
         .batching-header h2 { color: #FF6B35; border-bottom: 2px solid #FF6B35;}
+        .speed-header h2 { color: #FF4500; border-bottom: 2px solid #FF4500;}
         .log-box { height: 300px; overflow-y: auto; background: var(--log-box-bg); padding: 1rem; border-radius: 8px; font-family: monospace; }
         .btn { background: var(--button-bg); color: #fff; padding: 0.75rem 1.5rem; border-radius: 8px; text-decoration: none; font-weight: bold; display: inline-block; margin: 0.25rem; border: none; cursor: pointer; }
         .btn:hover { background: var(--button-hover); }
@@ -53,8 +54,9 @@
         .error { color: #e63946; }
         .trust-container { display: grid; grid-template-columns: repeat(12, 1fr); gap: 20px; margin-top: 2rem; }
         .data-freshness { grid-column: 1 / 4; }
-        .batching-status { grid-column: 4 / 7; }
-        .transaction-log { grid-column: 7 / -1; }
+        .speed-monitor { grid-column: 4 / 7; }
+        .batching-status { grid-column: 7 / 10; }
+        .transaction-log { grid-column: 10 / -1; }
         .intelligence-summary { grid-column: 1 / 7; }
         .alert-ledger { grid-column: 1 / -1; margin-top: 1.5rem; }
         .status-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; align-items: center; }
@@ -64,6 +66,7 @@
         .status-bad { color: #ef5350; }
         .status-vip { color: #FFD700; }
         .status-batching { color: #FF6B35; }
+        .status-speed { color: #FF4500; }
         .log-table, .ledger-table { width: 100%; border-collapse: collapse; font-family: 'Courier New', monospace; }
         .log-table th, .log-table td, .ledger-table th, .ledger-table td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border-color); }
         .log-table th, .ledger-table th { background-color: var(--table-header-bg); }
@@ -77,37 +80,50 @@
 </head>
 <body>
     <div class="container">
-        <div class="header"><h1>🚀 Secret_Alerts Intelligence Dashboard</h1></div>
+        <div class="header"><h1>ðŸš€ Secret_Alerts Intelligence Dashboard</h1></div>
         
         <div class="card">
             <h2>System Controls</h2>
-            <button id="theme-toggle" class="btn">🌗 Toggle Theme</button>
+            <button id="theme-toggle" class="btn">ðŸŒ— Toggle Theme</button>
             <hr style="border-color: #333; margin: 1rem 0;">
             
             <form action="/report-open-alerts" method="post" class="controls-form">
                 <input type="password" name="password" required placeholder="Password">
-                <button type="submit" class="btn">📊 Report All Open Alerts</button>
+                <button type="submit" class="btn">ðŸ"Š Report All Open Alerts</button>
             </form>
             
             <form action="/reset-monitor-state" method="post" class="controls-form" onsubmit="return confirm('Are you sure you want to reset the monitor state?');">
                 <input type="password" name="password" required placeholder="Password">
-                <button type="submit" class="btn" style="background-color: #f44336;">🔄 Reset Monitor State</button>
+                <button type="submit" class="btn" style="background-color: #f44336;">ðŸ"„ Reset Monitor State</button>
             </form>
             
             <hr style="border-color: #333; margin: 1rem 0;">
 
-            <a href="/time-travel" class="btn time-travel-btn">🕐 Time Travel Test</a>
-            <a href="/test-intelligence" class="btn intelligence-btn">🧠 Test Intelligence</a>
-            <a href="/test-batching" class="btn batching-btn">🃏 Test Batching</a>
+            <a href="/time-travel" class="btn time-travel-btn">ðŸ• Time Travel Test</a>
+            <a href="/test-intelligence" class="btn intelligence-btn">ðŸ§  Test Intelligence</a>
+            <a href="/test-batching" class="btn batching-btn">ðŸƒ Test Batching</a>
         </div>
 
         <div class="trust-container">
             <div class="card data-freshness trust-header">
-                <h2>🛡️ 1. Data Freshness</h2>
+                <h2>ðŸ›¡ï¸ 1. Data Freshness</h2>
                 <div id="freshness-content">Loading...</div>
             </div>
+            <div class="card speed-monitor speed-header">
+                <h2>⚡ 2. Speed Monitor</h2>
+                <div id="speed-content">
+                    <div class="status-grid">
+                        <strong>Status:</strong><span class="status-value status-speed" id="speed-status">Loading...</span>
+                        <strong>Checks:</strong><span class="status-value" id="speed-checks">Loading...</span>
+                        <strong>Success Rate:</strong><span class="status-value" id="speed-success">Loading...</span>
+                        <strong>Last Check:</strong><span class="status-value" id="speed-last">Loading...</span>
+                        <strong>Current Breakers:</strong><span class="status-value" id="speed-breakers">Loading...</span>
+                        <strong>Purpose:</strong><span class="status-value">2-3 Min Fast Alerts</span>
+                    </div>
+                </div>
+            </div>
             <div class="card batching-status batching-header">
-                <h2>🃏 2. Smart Batching</h2>
+                <h2>ðŸƒ 3. Smart Batching</h2>
                 <div id="batching-content">
                     <div class="status-grid">
                         <strong>Status:</strong><span class="status-value status-batching">Active</span>
@@ -118,7 +134,7 @@
                 </div>
             </div>
             <div class="card transaction-log trust-header">
-                <h2>🛡️ 3. Recent Activity Log</h2>
+                <h2>ðŸ›¡ï¸ 4. Recent Activity Log</h2>
                 <div class="table-container">
                     <table class="log-table">
                         <thead><tr><th>Time</th><th>Level</th><th>Message</th></tr></thead>
@@ -127,14 +143,14 @@
                 </div>
             </div>
             <div class="card intelligence-summary intelligence-header">
-                <h2>🧠 4. Intelligence Summary</h2>
+                <h2>ðŸ§  5. Intelligence Summary</h2>
                 <div id="intelligence-content">Loading...</div>
             </div>
             <div class="card alert-ledger trust-header">
-                <h2>🛡️ 5. Alert Ledger (Confirmed Sent)</h2>
+                <h2>ðŸ›¡ï¸ 6. Alert Ledger (Confirmed Sent)</h2>
                 <div class="table-container">
                     <table class="ledger-table">
-                        <thead><tr><th>Alert ID</th><th>Time</th><th>Type</th><th>Symbol</th><th>Priority</th><th>Freq</th><th>🃏</th><th>Details</th></tr></thead>
+                        <thead><tr><th>Alert ID</th><th>Time</th><th>Type</th><th>Symbol</th><th>Priority</th><th>Freq</th><th>ðŸƒ</th><th>Details</th></tr></thead>
                         <tbody id="ledger-content"><tr><td colspan="8">Loading...</td></tr></tbody>
                     </table>
                 </div>
@@ -181,6 +197,37 @@
             document.getElementById('batch-mode').textContent = mode;
             document.getElementById('batch-window').textContent = window_seconds + "s";
         }
+
+        function updateSpeedMonitor() {
+            fetch('/api/speed-status')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('speed-status').textContent = data.status;
+                    document.getElementById('speed-checks').textContent = data.total_checks;
+                    document.getElementById('speed-success').textContent = data.success_rate;
+                    document.getElementById('speed-last').textContent = data.last_check;
+                    document.getElementById('speed-breakers').textContent = data.current_breaker_count;
+                    
+                    // Update status color based on success rate
+                    const successElement = document.getElementById('speed-success');
+                    const successRate = parseFloat(data.success_rate);
+                    if (successRate >= 95) {
+                        successElement.className = 'status-value status-good';
+                    } else if (successRate >= 80) {
+                        successElement.className = 'status-value status-speed';
+                    } else {
+                        successElement.className = 'status-value status-bad';
+                    }
+                })
+                .catch(error => {
+                    console.error('Failed to update speed monitor:', error);
+                    document.getElementById('speed-status').textContent = 'Error';
+                    document.getElementById('speed-checks').textContent = 'N/A';
+                    document.getElementById('speed-success').textContent = 'N/A';
+                    document.getElementById('speed-last').textContent = 'N/A';
+                    document.getElementById('speed-breakers').textContent = 'N/A';
+                });
+        }
         
         function updateDashboard() {
             fetch('/api/health')
@@ -198,7 +245,7 @@
                     const ledgerBody = document.getElementById('ledger-content');
                     ledgerBody.innerHTML = '';
                     if (data.alerts.length === 0) { ledgerBody.innerHTML = '<tr><td colspan="8">No alerts sent yet.</td></tr>'; } 
-                    else { data.alerts.forEach(alert => { const row = ledgerBody.insertRow(); const priorityEmoji = alert.priority === 'VIP' ? '💎' : alert.priority === 'HIGH' ? '🔥' : '🔵'; const doubleMintIcon = alert.double_mint ? '🃏' : ''; row.innerHTML = `<td>${alert.alert_id}</td><td>${alert.timestamp}</td><td>${alert.alert_type}</td><td>${alert.symbol}</td><td>${priorityEmoji}</td><td>${alert.frequency||1}x</td><td>${doubleMintIcon}</td><td>${alert.details}</td>`; }); }
+                    else { data.alerts.forEach(alert => { const row = ledgerBody.insertRow(); const priorityEmoji = alert.priority === 'VIP' ? 'ðŸ'Ž' : alert.priority === 'HIGH' ? 'ðŸ"¥' : 'ðŸ"µ'; const doubleMintIcon = alert.double_mint ? 'ðŸƒ' : ''; row.innerHTML = `<td>${alert.alert_id}</td><td>${alert.timestamp}</td><td>${alert.alert_type}</td><td>${alert.symbol}</td><td>${priorityEmoji}</td><td>${alert.frequency||1}x</td><td>${doubleMintIcon}</td><td>${alert.details}</td>`; }); }
                 })
                 .catch(error => console.error('Failed to update dashboard:', error));
 
@@ -207,12 +254,13 @@
                 .then(intData => {
                     const intelDiv = document.getElementById('intelligence-content');
                     if (intData.stats && Object.keys(intData.stats).length > 0) {
-                        intelDiv.innerHTML = `<div class="status-grid"><strong>Total Alerts:</strong><span class="status-value">${intData.stats.total_alerts}</span><strong>VIP Alerts:</strong><span class="status-value status-vip">💎 ${intData.stats.vip_alerts}</span><strong>Double Mint:</strong><span class="status-value">🃏 ${intData.stats.double_mint_alerts}</span><strong>High Frequency:</strong><span class="status-value">🔥 ${intData.stats.high_frequency_alerts}</span><strong>Avg Frequency:</strong><span class="status-value">${intData.stats.average_frequency}x</span><strong>Status:</strong><span class="status-value status-good">${intData.message}</span></div>`;
+                        intelDiv.innerHTML = `<div class="status-grid"><strong>Total Alerts:</strong><span class="status-value">${intData.stats.total_alerts}</span><strong>VIP Alerts:</strong><span class="status-value status-vip">ðŸ'Ž ${intData.stats.vip_alerts}</span><strong>Double Mint:</strong><span class="status-value">ðŸƒ ${intData.stats.double_mint_alerts}</span><strong>High Frequency:</strong><span class="status-value">ðŸ"¥ ${intData.stats.high_frequency_alerts}</span><strong>Avg Frequency:</strong><span class="status-value">${intData.stats.average_frequency}x</span><strong>Status:</strong><span class="status-value status-good">${intData.message}</span></div>`;
                     } else { intelDiv.innerHTML = '<p>Intelligence system initializing...</p>'; }
                 })
                 .catch(error => { console.error('Failed to update intelligence:', error); document.getElementById('intelligence-content').innerHTML = '<p>Intelligence data unavailable</p>'; });
             
             updateBatchingStatus();
+            updateSpeedMonitor();
         }
         
         document.addEventListener('DOMContentLoaded', () => {
