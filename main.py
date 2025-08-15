@@ -28,6 +28,7 @@ log_lock = threading.Lock()
 
 # --- Logging Setup ---
 recent_logs = deque(maxlen=20)
+
 class CaptureLogsHandler(logging.Handler):
     def emit(self, record):
         with log_lock:
@@ -146,7 +147,7 @@ def reset_monitor_state():
 
     try:
         monitor = ShortSaleMonitor()
-        monitor.save_state(pd.DataFrame()) # Reset by saving an empty state
+        monitor.save_state(pd.DataFrame())  # Reset by saving an empty state
         health_monitor.log_transaction("Monitor state manually reset by user.", "SUCCESS")
         app.logger.info("Successfully reset 'short_sale_monitor_state' document.")
     except Exception as e:
@@ -215,7 +216,7 @@ def test_batching():
         app.logger.error(f"Batching test failed: {e}", exc_info=True)
         return f"Test failed: {str(e)}", 500
 
-        @app.route('/speed-check', methods=['POST'])
+@app.route('/speed-check', methods=['POST'])
 def speed_check_endpoint():
     """New endpoint for 2-minute speed checks"""
     app.logger.info("⚡ Speed check triggered")
@@ -276,15 +277,15 @@ def test_discord():
         health_message = """**Speed Monitor Health Report** 🟢
         
 **Last 15 Minutes:**
-- Checks performed: 5 (TEST)
-- Alerts sent: 1 (TEST)
-- Errors: 0
-- Current breakers: 23
+• Checks performed: 5 (TEST)
+• Alerts sent: 1 (TEST)
+• Errors: 0
+• Current breakers: 23
 
 **Overall Stats:**
-- Total checks: 100 (TEST)
-- Success rate: 100.0%
-- Status: Testing Discord connectivity
+• Total checks: 100 (TEST)
+• Success rate: 100.0%
+• Status: Testing Discord connectivity
 
 *This is a test message*"""
 
@@ -311,7 +312,6 @@ def test_discord():
         
     except Exception as e:
         return f"❌ Test error: {str(e)}", 500
-
 
 @app.route('/time-travel')
 def time_travel():
