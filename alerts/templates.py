@@ -93,7 +93,7 @@ class ShortSaleAlertFormatter(AlertFormatter):
             message_parts.append("")
         
         if not ended_breakers_df.empty:
-            ended_lines =.sort_values(by=['is_vip', date_col, time_col], ascending=[False, True, True])
+            ended_lines =sort_values(by=['is_vip', date_col, time_col], ascending=[False, True, True])
         
         return {
             'title': title,
