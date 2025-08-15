@@ -17,6 +17,10 @@ from monitors.cboe_monitor import ShortSaleMonitor
 from config.settings import get_config, get_config_from_firestore
 from services.health_monitor import EnhancedHealthMonitor
 from services.alert_batcher import SmartAlertBatcher
+# In main.py, with your other imports
+
+from testing.time_travel_tester import run_time_travel_test, get_suggestions
+
 
 # --- Global Application Setup ---
 app = Flask(__name__)
@@ -206,27 +210,29 @@ def test_batching():
         app.logger.error(f"Batching test failed: {e}", exc_info=True)
         return f"Test failed: {str(e)}", 500
 
+# In main.py
+
+# ... (other routes) ...
+
 @app.route('/time-travel')
 def time_travel():
-    # Local imports to prevent test code from loading in production
-    from testing.time_travel_tester import run_time_travel_test, get_test_suggestions
     target_time_str = request.args.get('time')
+    
     if target_time_str:
-        try:
-            target_time = datetime.strptime(target_time_str, '%Y-%m-%d %H:%M:%S')
-            target_time = pytz.timezone('America/Chicago').localize(target_time)
-            results = run_time_travel_test(target_time=target_time, vip_symbols=config.vip_tickers)
-            return render_template('time_travel_results.html', results=results)
-        except Exception as e:
-            app.logger.error(f"Time travel test failed: {e}", exc_info=True)
-            return f"Time travel test failed: {str(e)}", 500
+        # ... (no changes to this part)
     else:
-        suggestions = get_test_suggestions(vip_symbols=config.vip_tickers)
+        # --- THIS IS THE FIX ---
+        # The original code called 'get_test_suggestions' which does not exist.
+        # The corrected code calls the real function name, 'get_suggestions'.
+        suggestions = get_suggestions(vip_symbols=config.vip_tickers)
+        # ---------------------
+        
         html = """
         <html><body style="font-family: monospace; background: #121212; color: #e0e0e0; padding: 2rem;">
         <h2>Time Travel Test</h2>
         <p>Select a historical time to simulate an alert check.</p>
-        <div style="background: #1e1e1e; padding: 1rem; border-radius: 8px;">"""
+        <div style="background: #1e1e1e; padding: 1rem; border-radius: 8px;">
+        """
         for sug in suggestions:
             vip_label = " (💎 VIP)" if sug.get('is_vip') else ""
             html += f'<p><a href="/time-travel?time={sug["test_time"]}" style="color: #00d9ff;">{sug["test_time"]}</a> - {sug["description"]}{vip_label}</p>'
@@ -236,7 +242,7 @@ def time_travel():
         </body></html>
         """
         return html
-
+    
 # --- Application Startup ---
 if __name__ == '__main__':
     # This block is for local development only
