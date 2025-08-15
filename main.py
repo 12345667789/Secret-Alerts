@@ -102,24 +102,35 @@ def report_open_alerts():
     submitted_password = request.form.get('password')
     correct_password = get_config_from_firestore('security', 'dashboard_password')
     if not correct_password or submitted_password != correct_password:
-        app.logger.warning("Failed login attempt for open alerts report.")
         return "Invalid password.", 403
 
     try:
+        # ... (webhook and alert_manager setup is the same)
         webhook_url = get_config_from_firestore('discord_webhooks', 'short_sale_alerts')
         discord_client = DiscordClient(webhook_url=webhook_url)
         alert_manager = EnhancedAlertManager(discord_client, template_manager, config.vip_tickers)
         monitor = ShortSaleMonitor()
         current_df = monitor.fetch_data()
+
         if current_df is None or current_df.empty:
             alert_manager.send_formatted_alert({'title': "Open Alerts Report", 'message': "Could not retrieve data.", 'color': 0xfca311})
             return redirect(url_for('dashboard'))
+
         open_alerts = current_df[pd.isnull(current_df['End Time'])]
+
+        # --- THIS IS THE FIX ---
+        # Sort the open_alerts DataFrame by the 'Trigger Time' before formatting.
+        if not open_alerts.empty:
+            open_alerts = open_alerts.sort_values(by='Trigger Time', ascending=True)
+        # ---------------------
+
         formatter = template_manager.get_formatter('short_sale')
         alert_data = formatter.format_open_alerts_report(open_alerts)
         alert_manager.send_formatted_alert(alert_data)
+        
     except Exception as e:
         app.logger.error(f"Failed to generate open alerts report: {e}", exc_info=True)
+
     return redirect(url_for('dashboard'))
 
 @app.route('/reset-monitor-state', methods=['POST'])
